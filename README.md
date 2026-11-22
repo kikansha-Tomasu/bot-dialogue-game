@@ -10,7 +10,7 @@ AIキャラクターが2Dマップ上を自由に動き回り、プレイヤー�
 
 - **サーバー不要（GitHub Pages）でそのまま稼働**：
   - 静的サイトを開くだけで、ブラウザ内蔵の **Hugging Face Transformers.js v3（WebGPU / WASM）** が Web Worker 上で自動起動し、無料・APIトークン不要で **Hugging Face ONNX モデル**（`onnx-community/Qwen2.5-0.5B-Instruct`・WebGPU `q4f16` / WASM `q8`）を動かします（モデルはブラウザにキャッシュされます）。
-  - 読み上げ音声もブラウザ内蔵の **Hugging Face ニューラル日本語 VITS2（`piper-plus`：`ayousanz/piper-plus-tsukuyomi-chan` / `ayousanz/piper-plus-css10-ja-6lang`）** が専用 Web Worker で動作し、サーバー不要で自然なイントネーションの日本語音声を合成します（IndexedDB キャッシュ対応）。
+  - 読み上げ音声もブラウザ内蔵の **Hugging Face Kokoro-82M v1.0（StyleTTS2 / 24kHz：`jf_alpha`・`jm_kumo`・`jf_tebukuro`）＋ Rust WASM OpenJTalk** が専用 Web Worker（WebGPU / WASM 自動切替）で動作し、3キャラクターそれぞれ異なる自然な日本語音声を合成します（Cache API キャッシュ対応）。
 - **ローカル高音質・高性能モード（`server.py` / `起動.bat`）**：
   - `http://127.0.0.1:8765` で起動すると自動的にローカルサーバーへ接続し、**Google Gemma 3 4B Instruct**（`unsloth/gemma-3-4b-it-GGUF`, `Q4_K_M`）＋ **Style-Bert-VITS2 JP-Extra**（あみたろ / `jvnv-M1-jp` / `jvnv-F2-jp`）で自然な日本語会話と高品質な音声合成が完全無料・回数無制限で楽しめます。
 - **全員が「総資産ランキング1位」を競うライバル**：
@@ -42,7 +42,7 @@ AIキャラクターが2Dマップ上を自由に動き回り、プレイヤー�
 
 | 動作モード | LLM（会話・行動判断） | 音声（TTS） | サーバー / 課金 |
 |---|---|---|---|
-| **GitHub Pages（サーバー不要）** | `onnx-community/Qwen2.5-0.5B-Instruct`（WebGPU `q4f16` / WASM `q8`） | `ayousanz/piper-plus-tsukuyomi-chan`（Alice / Carol）<br>`ayousanz/piper-plus-css10-ja-6lang`（Bob）<br>（`piper-plus` ブラウザ内 VITS2 ニューラル合成） | **サーバー不要・無料** |
+| **GitHub Pages（サーバー不要）** | `onnx-community/Qwen2.5-0.5B-Instruct`（WebGPU `q4f16` / WASM `q8`） | `onnx-community/Kokoro-82M-v1.0-ONNX`（StyleTTS2 24kHz・WebGPU `fp32` / WASM `q8f16`）<br>`jf_alpha`（Alice）/ `jm_kumo`（Bob）/ `jf_tebukuro`（Carol）＋ Rust WASM OpenJTalk | **サーバー不要・無料** |
 | **ローカルサーバー（`server.py`）** | `unsloth/gemma-3-4b-it-GGUF`（Google Gemma 3 4B `Q4_K_M`） | `litagin/sbv2_amitaro`（Alice）<br>`litagin/style_bert_vits2_jvnv`（Bob `M1` / Carol `F2`） | ローカル無料・API枠不要 |
 
 ---
@@ -74,6 +74,7 @@ Bot対話ゲーム/
 ├── css/style.css                     ← UI・アクセシビリティ対応スタイル
 ├── js/
 │   ├── hf-browser-worker.js          ← サーバー不要用 Hugging Face Transformers.js Web Worker
+│   ├── hf-tts-worker.js              ← サーバー不要用 Hugging Face Kokoro-82M (StyleTTS2) 日本語音声 Web Worker
 │   ├── api.js                        ← Hugging Face AI クライアント（ローカル／ブラウザ自動切替）
 │   ├── tts.js                        ← 音声管理（Style-Bert-VITS2 ／ 自然日本語ブラウザ音声）
 │   ├── config.js                     ← ゲーム・キャラクター設定

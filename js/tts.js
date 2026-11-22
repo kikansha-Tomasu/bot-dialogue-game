@@ -132,7 +132,7 @@ class TTSManager {
       return;
     }
     try {
-      this._ttsWorker = new Worker("js/hf-tts-worker.js?v=gh9", { type: "module" });
+      this._ttsWorker = new Worker("js/hf-tts-worker.js?v=gh10", { type: "module" });
       this.browserTtsLoading = true;
       this.browserTtsError = "";
       this._ttsWorker.onmessage = (event) => {
@@ -574,9 +574,9 @@ class TTSManager {
     const cfg = this._getCharConfig(characterName);
     const estDuration = TTSManager.estimateDurationSec(cleanText);
 
-    // GitHub Pages 等のサーバーレス環境ではブラウザ内蔵 Hugging Face ニューラル VITS2 音声を使用
+    // GitHub Pages 等のサーバーレス環境ではブラウザ内蔵 Hugging Face Kokoro-82M (StyleTTS2 24kHz) を使用
     if (!this._isLocalHost) {
-      // 再生速度(playbackRate)による早送り・音程変化は使わず、VITS2 側の lengthScale のみで自然な話速に制御
+      // 再生速度(playbackRate)による早送り・音程変化は使わず、Kokoro 推論側の speed のみで自然な話速に制御
       const playbackRate = 1.0;
       const cacheKey = `${characterName}::${cleanText}`;
       const cached = this._wavCache.get(cacheKey);
@@ -586,7 +586,7 @@ class TTSManager {
 
       if (this.browserTtsReady || (this.browserTtsLoading && !this.browserTtsError)) {
         try {
-          const timeoutMs = this.browserTtsReady ? 18000 : 65000;
+          const timeoutMs = this.browserTtsReady ? 35000 : 120000;
           const res = await this._synthesizeInBrowserWorker(cleanText, characterName, timeoutMs);
           if (item.cancelled || !this.enabled) {
             return { kind: "cancelled", durationSec: 0 };

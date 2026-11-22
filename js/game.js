@@ -863,7 +863,7 @@ class Game {
       const modeLabel = isHfLocal
         ? "Hugging Face Style-Bert-VITS2 JP-Extra (あみたろ / jvnv-M1 / jvnv-F2)"
         : isHfBrowser
-          ? "Hugging Face ニューラル音声 (piper-plus: つくよみちゃん / CSS10)"
+          ? `Hugging Face ニューラル音声: ${ttsManager.activeVoiceLabel || "Kokoro-82M 24kHz"}`
           : isHfBrowserLoading
             ? `Hugging Face ニューラル音声を読込中 (${ttsManager.browserTtsProgress || 0}%)`
             : `自然日本語ブラウザ音声 (${ttsManager.activeVoiceLabel || "Web Speech API"})`;

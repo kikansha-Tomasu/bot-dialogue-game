@@ -767,14 +767,19 @@ test("Serverless GitHub Pages mode: HuggingFaceClient switches to browser-hf and
   tts._unblockedAtMs = Date.now() - 1000;
   assert.equal(tts.toggle(), false);
 
-  // 6. ブラウザ内蔵 VITS2 の話速設定が早口(<=1.1)や pitch 歪み(playbackRate!=1.0)に戻らないこと
+  // 6. ブラウザ内蔵 Kokoro-82M (StyleTTS2 24kHz) が3キャラ別々の日本語モデル・自然な話速・playbackRate=1.0 を維持していること
   const workerSrc = fs.readFileSync(path.join(rootDir, "js/hf-tts-worker.js"), "utf8");
+  assert.match(workerSrc, /onnx-community\/Kokoro-82M-v1\.0-ONNX/);
+  const assignedVoices = new Set();
   for (const name of ["Alice", "Bob", "Carol"]) {
-    const m = workerSrc.match(new RegExp(`${name}:\\s*\\{[^}]*lengthScale:\\s*([0-9.]+)`));
-    assert.ok(m, `${name} の lengthScale 定義が見つかること`);
-    const ls = Number(m[1]);
-    assert.ok(ls >= 1.25 && ls <= 1.70, `${name} の lengthScale(${ls}) が自然な日本語話速範囲(1.25〜1.70)であること`);
+    const m = workerSrc.match(new RegExp(`${name}:\\s*\\{\\s*voice:\\s*"(j[fm]_[a-z]+)",\\s*speed:\\s*([0-9.]+)`));
+    assert.ok(m, `${name} の Kokoro 日本語ボイス定義が見つかること`);
+    assignedVoices.add(m[1]);
+    const spd = Number(m[2]);
+    assert.ok(spd >= 0.82 && spd <= 1.02, `${name} の話速(${spd})が自然な会話テンポ範囲(0.82〜1.02)であること`);
   }
+  assert.equal(assignedVoices.size, 3, "Alice / Bob / Carol の3キャラが重複しない別々の音声モデルを持つこと");
+  assert.doesNotMatch(workerSrc, /model_fp16\.onnx/, "WebGPU で NaN 無音を引き起こす model_fp16.onnx を使用しないこと");
   const ttsSrc = fs.readFileSync(path.join(rootDir, "js/tts.js"), "utf8");
   assert.match(ttsSrc, /const\s+playbackRate\s*=\s*1\.0\s*;/);
 });
