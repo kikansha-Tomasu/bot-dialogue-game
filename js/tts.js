@@ -16,15 +16,155 @@ class TTSManager {
     this._voices = [];
     this._voicesLoaded = false;
     this._voiceWaiters = [];
-    this.activeVoiceLabel = "ブラウザAI音声";
+    this.activeVoiceLabel = "HFニューラル音声";
     this.onStateChange = null;
+
+    // サーバー不要（GitHub Pages 等）用のブラウザ内蔵 Hugging Face VITS2 TTS Worker
+    this._ttsWorker = null;
+    this.browserTtsReady = false;
+    this.browserTtsLoading = false;
+    this.browserTtsProgress = 0;
+    this.browserTtsError = "";
+    this._ttsPending = new Map();
+    this._ttsReqSeq = 0;
+    this._wavCache = new Map();
 
     if (typeof window !== "undefined") {
       this._initBrowserVoices();
       if (typeof fetch !== "undefined") {
         this._checkAvailability();
       }
+      if (!this._isLocalHost) {
+        this._initBrowserTtsWorker();
+      }
     }
+  }
+
+  _initBrowserTtsWorker() {
+    if (this.browserTtsReady || this.browserTtsLoading || typeof Worker === "undefined") return;
+    if (this._ttsWorker) {
+      this.browserTtsLoading = true;
+      this.browserTtsError = "";
+      this._ttsWorker.postMessage({ type: "preload" });
+      if (this.onStateChange) this.onStateChange(this.enabled, this.localAvailable);
+      return;
+    }
+    try {
+      this._ttsWorker = new Worker("js/hf-tts-worker.js?v=gh6", { type: "module" });
+      this.browserTtsLoading = true;
+      this.browserTtsError = "";
+      this._ttsWorker.onmessage = (event) => {
+        const msg = event.data || {};
+        if (msg.type === "progress") {
+          this.browserTtsProgress = msg.percent || this.browserTtsProgress;
+          if (this.onStateChange) this.onStateChange(this.enabled, this.localAvailable);
+        } else if (msg.type === "ready") {
+          this.browserTtsReady = true;
+          this.browserTtsLoading = false;
+          this.browserTtsProgress = 100;
+          this.browserTtsError = "";
+          if (msg.label) this.activeVoiceLabel = msg.label;
+          if (this.onStateChange) this.onStateChange(this.enabled, this.localAvailable);
+        } else if (msg.type === "error") {
+          this.browserTtsLoading = false;
+          this.browserTtsError = msg.message || "Browser TTS load failed";
+          console.warn("[TTS] Browser Hugging Face VITS2 load failed:", this.browserTtsError);
+          if (this.onStateChange) this.onStateChange(this.enabled, this.localAvailable);
+        } else if (msg.type === "audio") {
+          const resolver = this._ttsPending.get(msg.requestId);
+          if (resolver) {
+            this._ttsPending.delete(msg.requestId);
+            if (msg.error) resolver.reject(new Error(msg.error));
+            else resolver.resolve(msg);
+          }
+        }
+      };
+      this._ttsWorker.onerror = (err) => {
+        this.browserTtsLoading = false;
+        this.browserTtsError = err?.message || "TTS Worker error";
+        try { this._ttsWorker?.terminate(); } catch (_) {}
+        this._ttsWorker = null;
+        for (const [, r] of this._ttsPending) {
+          r.reject(new Error(this.browserTtsError));
+        }
+        this._ttsPending.clear();
+        if (this.onStateChange) this.onStateChange(this.enabled, this.localAvailable);
+      };
+      this._ttsWorker.postMessage({ type: "preload" });
+      if (this.onStateChange) this.onStateChange(this.enabled, this.localAvailable);
+    } catch (err) {
+      this.browserTtsLoading = false;
+      this.browserTtsError = err?.message || "TTS Worker unavailable";
+    }
+  }
+
+  _synthesizeInBrowserWorker(cleanText, characterName, timeoutMs = 45000) {
+    return new Promise((resolve, reject) => {
+      if (!this._ttsWorker) this._initBrowserTtsWorker();
+      if (!this._ttsWorker) {
+        reject(new Error("Browser TTS Worker unavailable"));
+        return;
+      }
+      const requestId = ++this._ttsReqSeq;
+      const timer = setTimeout(() => {
+        this._ttsPending.delete(requestId);
+        reject(new Error("Browser TTS synthesis timeout"));
+      }, timeoutMs);
+      this._ttsPending.set(requestId, {
+        resolve: (res) => { clearTimeout(timer); resolve(res); },
+        reject: (err) => { clearTimeout(timer); reject(err); },
+      });
+      this._ttsWorker.postMessage({
+        type: "synthesize",
+        requestId,
+        text: cleanText,
+        characterName,
+      });
+    });
+  }
+
+  _cacheWav(key, wavBuffer) {
+    if (!wavBuffer || wavBuffer.byteLength === 0) return;
+    if (this._wavCache.size >= 64) {
+      const oldestKey = this._wavCache.keys().next().value;
+      this._wavCache.delete(oldestKey);
+    }
+    this._wavCache.set(key, wavBuffer.slice(0));
+  }
+
+  async _createAudioFromBlob(blob, item, estDuration, playbackRate = 1.0) {
+    const url = URL.createObjectURL(blob);
+    item._blobUrl = url;
+    const audio = new Audio(url);
+    audio.preload = "auto";
+    if (playbackRate && playbackRate !== 1.0) {
+      audio.playbackRate = playbackRate;
+    }
+
+    await new Promise((resolve) => {
+      if (audio.readyState >= 2) {
+        resolve();
+        return;
+      }
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        clearTimeout(metaTimer);
+        resolve();
+      };
+      const metaTimer = setTimeout(finish, 1500);
+      audio.addEventListener("canplay", finish, { once: true });
+      audio.addEventListener("loadedmetadata", finish, { once: true });
+      audio.addEventListener("error", finish, { once: true });
+      try { audio.load(); } catch (_) { finish(); }
+    });
+
+    const rawDur = (isFinite(audio.duration) && audio.duration > 0.1)
+      ? audio.duration
+      : estDuration;
+    const realDur = playbackRate > 0 ? rawDur / playbackRate : rawDur;
+    return { kind: "audio", audio, url, durationSec: realDur };
   }
 
   static _detectLocalHost() {
@@ -308,8 +448,34 @@ class TTSManager {
     const cfg = this._getCharConfig(characterName);
     const estDuration = TTSManager.estimateDurationSec(cleanText);
 
-    // GitHub Pages 等のサーバーレス環境ではブラウザ自然日本語音声を準備
+    // GitHub Pages 等のサーバーレス環境ではブラウザ内蔵 Hugging Face ニューラル VITS2 音声を使用
     if (!this._isLocalHost) {
+      const playbackRate = characterName === "Carol" ? 1.05 : characterName === "Bob" ? 0.98 : 1.0;
+      const cacheKey = `${characterName}::${cleanText}`;
+      const cached = this._wavCache.get(cacheKey);
+      if (cached) {
+        const blob = new Blob([cached], { type: "audio/wav" });
+        return await this._createAudioFromBlob(blob, item, estDuration, playbackRate);
+      }
+
+      if (this.browserTtsReady || (this.browserTtsLoading && !this.browserTtsError)) {
+        try {
+          const timeoutMs = this.browserTtsReady ? 20000 : 65000;
+          const res = await this._synthesizeInBrowserWorker(cleanText, characterName, timeoutMs);
+          if (item.cancelled || !this.enabled) {
+            return { kind: "cancelled", durationSec: 0 };
+          }
+          if (res?.wavBuffer && res.wavBuffer.byteLength > 44) {
+            this._cacheWav(cacheKey, res.wavBuffer);
+            const blob = new Blob([res.wavBuffer], { type: "audio/wav" });
+            const dur = res.durationSec > 0.1 ? res.durationSec : estDuration;
+            return await this._createAudioFromBlob(blob, item, dur, playbackRate);
+          }
+        } catch (err) {
+          console.warn("[TTS] Browser neural TTS fallback to Web Speech:", err?.message || err);
+        }
+      }
+
       await this._waitForVoicesReady(700);
       return { kind: "speech", clean: cleanText, cfg, durationSec: estDuration };
     }
@@ -346,35 +512,7 @@ class TTSManager {
         return { kind: "cancelled", durationSec: 0 };
       }
 
-      const url = URL.createObjectURL(blob);
-      item._blobUrl = url;
-      const audio = new Audio(url);
-      audio.preload = "auto";
-
-      // 音声メタデータ / 再生準備完了まで待機（再生開始の瞬間にチャットを表示するため）
-      await new Promise((resolve) => {
-        if (audio.readyState >= 2) {
-          resolve();
-          return;
-        }
-        let done = false;
-        const finish = () => {
-          if (done) return;
-          done = true;
-          clearTimeout(metaTimer);
-          resolve();
-        };
-        const metaTimer = setTimeout(finish, 1500);
-        audio.addEventListener("canplay", finish, { once: true });
-        audio.addEventListener("loadedmetadata", finish, { once: true });
-        audio.addEventListener("error", finish, { once: true });
-        try { audio.load(); } catch (_) { finish(); }
-      });
-
-      const realDur = (isFinite(audio.duration) && audio.duration > 0.1)
-        ? audio.duration
-        : estDuration;
-      return { kind: "audio", audio, url, durationSec: realDur };
+      return await this._createAudioFromBlob(blob, item, estDuration, 1.0);
     } catch (_) {
       if (timer) clearTimeout(timer);
       this._failCount++;

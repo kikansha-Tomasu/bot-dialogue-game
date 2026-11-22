@@ -749,6 +749,12 @@ test("Serverless GitHub Pages mode: HuggingFaceClient switches to browser-hf and
   assert.equal(health.ok, true);
   assert.equal(health.hf_api.mode, "browser-transformers-js");
   assert.equal(health.tts.local_available, false);
+
+  // 4. ブラウザ内蔵 Hugging Face VITS2 TTS の WAV キャッシュが機能し上限64件を超えないこと
+  const dummyWav = new ArrayBuffer(128);
+  tts._cacheWav("Alice::テスト", dummyWav);
+  assert.equal(tts._wavCache.has("Alice::テスト"), true);
+  assert.equal(tts._wavCache.get("Alice::テスト").byteLength, 128);
 });
 
 test("Audio-synchronized chat & movement: delays chat until audio starts, holds movement/bubble during speech, resumes on end", async () => {

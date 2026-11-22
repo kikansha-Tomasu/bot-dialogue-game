@@ -156,6 +156,16 @@ class Game {
           this.apiClient._initBrowserWorker();
           this._updateStatusPill();
         }
+        if (
+          typeof ttsManager !== "undefined" &&
+          ttsManager &&
+          !ttsManager._isLocalHost &&
+          !ttsManager.browserTtsReady &&
+          !ttsManager.browserTtsLoading &&
+          ttsManager.browserTtsError
+        ) {
+          ttsManager._initBrowserTtsWorker();
+        }
         return;
       }
       const ttsDown = typeof ttsManager !== "undefined" && ttsManager && ttsManager._isLocalHost && ttsManager.localAvailable !== true;
@@ -847,16 +857,21 @@ class Game {
       if (!ttsBtn || typeof ttsManager === "undefined" || !ttsManager) return;
       const on = ttsManager.enabled;
       const isHfLocal = ttsManager.localAvailable === true;
-      const isServerless = !ttsManager._isLocalHost;
+      const isHfBrowser = !ttsManager._isLocalHost && ttsManager.browserTtsReady;
+      const isHfBrowserLoading = !ttsManager._isLocalHost && ttsManager.browserTtsLoading;
       const modeLabel = isHfLocal
         ? "Hugging Face Style-Bert-VITS2 JP-Extra (あみたろ / jvnv-M1 / jvnv-F2)"
-        : `自然日本語ブラウザ音声 (${ttsManager.activeVoiceLabel || "Web Speech API"})`;
+        : isHfBrowser
+          ? "Hugging Face ニューラル音声 (piper-plus: つくよみちゃん / CSS10)"
+          : isHfBrowserLoading
+            ? `Hugging Face ニューラル音声を読込中 (${ttsManager.browserTtsProgress || 0}%)`
+            : `自然日本語ブラウザ音声 (${ttsManager.activeVoiceLabel || "Web Speech API"})`;
       ttsBtn.textContent = !on
         ? "🔇 音声OFF"
-        : isHfLocal
+        : (isHfLocal || isHfBrowser)
           ? "🔊 HF音声ON"
-          : isServerless
-            ? "🔊 AI音声ON"
+          : isHfBrowserLoading
+            ? `⏳ HF音声 ${ttsManager.browserTtsProgress || 0}%`
             : "🔊 ブラウザ音声";
       ttsBtn.setAttribute("aria-pressed", String(on));
       ttsBtn.title = on ? `読み上げON（${modeLabel}）— クリックでミュート` : "読み上げOFF — クリックで有効化";

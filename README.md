@@ -10,7 +10,7 @@ AIキャラクターが2Dマップ上を自由に動き回り、プレイヤー�
 
 - **サーバー不要（GitHub Pages）でそのまま稼働**：
   - 静的サイトを開くだけで、ブラウザ内蔵の **Hugging Face Transformers.js v3（WebGPU / WASM）** が Web Worker 上で自動起動し、無料・APIトークン不要で **Hugging Face ONNX モデル**（`onnx-community/Qwen2.5-0.5B-Instruct`・WebGPU `q4f16` / WASM `q8`）を動かします（モデルはブラウザにキャッシュされます）。
-  - 読み上げ音声は OS / ブラウザの自然な日本語ニューラル音声（Microsoft Nanami / Keita Natural、Google 日本語など）を自動選択し、絵文字や `Lv.3` を自然な日本語へ変換して読み上げます。
+  - 読み上げ音声もブラウザ内蔵の **Hugging Face ニューラル日本語 VITS2（`piper-plus`：`ayousanz/piper-plus-tsukuyomi-chan` / `ayousanz/piper-plus-css10-ja-6lang`）** が専用 Web Worker で動作し、サーバー不要で自然なイントネーションの日本語音声を合成します（IndexedDB キャッシュ対応）。
 - **ローカル高音質・高性能モード（`server.py` / `起動.bat`）**：
   - `http://127.0.0.1:8765` で起動すると自動的にローカルサーバーへ接続し、**Google Gemma 3 4B Instruct**（`unsloth/gemma-3-4b-it-GGUF`, `Q4_K_M`）＋ **Style-Bert-VITS2 JP-Extra**（あみたろ / `jvnv-M1-jp` / `jvnv-F2-jp`）で自然な日本語会話と高品質な音声合成が完全無料・回数無制限で楽しめます。
 - **全員が「総資産ランキング1位」を競うライバル**：
@@ -42,7 +42,7 @@ AIキャラクターが2Dマップ上を自由に動き回り、プレイヤー�
 
 | 動作モード | LLM（会話・行動判断） | 音声（TTS） | サーバー / 課金 |
 |---|---|---|---|
-| **GitHub Pages（サーバー不要）** | `onnx-community/Qwen2.5-0.5B-Instruct`（WebGPU `q4f16` / WASM `q8`） | ブラウザ自然日本語ニューラル音声<br>（Nanami / Keita Natural 等） | **サーバー不要・無料** |
+| **GitHub Pages（サーバー不要）** | `onnx-community/Qwen2.5-0.5B-Instruct`（WebGPU `q4f16` / WASM `q8`） | `ayousanz/piper-plus-tsukuyomi-chan`（Alice / Carol）<br>`ayousanz/piper-plus-css10-ja-6lang`（Bob）<br>（`piper-plus` ブラウザ内 VITS2 ニューラル合成） | **サーバー不要・無料** |
 | **ローカルサーバー（`server.py`）** | `unsloth/gemma-3-4b-it-GGUF`（Google Gemma 3 4B `Q4_K_M`） | `litagin/sbv2_amitaro`（Alice）<br>`litagin/style_bert_vits2_jvnv`（Bob `M1` / Carol `F2`） | ローカル無料・API枠不要 |
 
 ---
