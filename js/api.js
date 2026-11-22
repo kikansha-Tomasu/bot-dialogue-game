@@ -29,6 +29,9 @@ class HuggingFaceClient {
     this._workerReady = false;
     this._workerLoading = false;
     this._workerProgress = 0;
+    this._workerLoadedBytes = 0;
+    this._workerTotalBytes = 0;
+    this._workerStage = "connecting";
     this._workerModel = "";
     this._workerDevice = "";
     this._workerError = "";
@@ -80,23 +83,42 @@ class HuggingFaceClient {
       // 前回の読み込みエラーから再試行
       this._workerLoading = true;
       this._workerError = "";
+      this._workerStage = "connecting";
       this._worker.postMessage({ type: "load" });
+      if (this.onBrowserProgress) {
+        this.onBrowserProgress({
+          ready: false,
+          percent: this._workerProgress,
+          loadedBytes: this._workerLoadedBytes,
+          totalBytes: this._workerTotalBytes,
+          stage: this._workerStage,
+          modelId: this._workerModel,
+          device: this._workerDevice,
+        });
+      }
       return;
     }
     try {
       this._worker = new Worker("js/hf-browser-worker.js", { type: "module" });
       this._workerLoading = true;
       this._workerError = "";
+      this._workerStage = "connecting";
       this._worker.onmessage = (event) => {
         const msg = event.data || {};
         if (msg.type === "progress") {
           this._workerProgress = msg.percent || 0;
+          this._workerLoadedBytes = msg.loadedBytes || 0;
+          this._workerTotalBytes = msg.totalBytes || 0;
+          this._workerStage = msg.stage || (this._workerProgress > 0 ? "downloading" : "connecting");
           this._workerModel = msg.modelId || this._workerModel;
           this._workerDevice = msg.device || this._workerDevice;
           if (this.onBrowserProgress) {
             this.onBrowserProgress({
               ready: false,
               percent: this._workerProgress,
+              loadedBytes: this._workerLoadedBytes,
+              totalBytes: this._workerTotalBytes,
+              stage: this._workerStage,
               modelId: this._workerModel,
               device: this._workerDevice,
             });
@@ -105,6 +127,7 @@ class HuggingFaceClient {
           this._workerReady = true;
           this._workerLoading = false;
           this._workerProgress = 100;
+          this._workerStage = "ready";
           this._workerModel = msg.modelId || "onnx-community/Qwen2.5-0.5B-Instruct";
           this._workerDevice = msg.device || "wasm";
           this.hfAvailable = true;
@@ -114,15 +137,19 @@ class HuggingFaceClient {
             this.onBrowserProgress({
               ready: true,
               percent: 100,
+              loadedBytes: this._workerTotalBytes,
+              totalBytes: this._workerTotalBytes,
+              stage: "ready",
               modelId: this._workerModel,
               device: this._workerDevice,
             });
           }
         } else if (msg.type === "error") {
           this._workerLoading = false;
+          this._workerStage = "error";
           this._workerError = msg.message || "Worker load failed";
           if (this.onBrowserProgress) {
-            this.onBrowserProgress({ ready: false, error: this._workerError });
+            this.onBrowserProgress({ ready: false, stage: "error", error: this._workerError });
           }
         } else if (msg.type === "result") {
           const resolver = this._workerPending.get(msg.requestId);
@@ -135,6 +162,7 @@ class HuggingFaceClient {
       };
       this._worker.onerror = (err) => {
         this._workerLoading = false;
+        this._workerStage = "error";
         this._workerError = err?.message || "Web Worker error";
         try { this._worker?.terminate(); } catch (_) {}
         this._worker = null;
@@ -143,12 +171,13 @@ class HuggingFaceClient {
         }
         this._workerPending.clear();
         if (this.onBrowserProgress) {
-          this.onBrowserProgress({ ready: false, error: this._workerError });
+          this.onBrowserProgress({ ready: false, stage: "error", error: this._workerError });
         }
       };
       this._worker.postMessage({ type: "load" });
     } catch (err) {
       this._workerLoading = false;
+      this._workerStage = "error";
       this._workerError = err?.message || "Worker unavailable";
     }
   }

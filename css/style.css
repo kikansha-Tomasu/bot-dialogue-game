@@ -65,7 +65,167 @@ select:focus-visible {
 
 .hud-pill.status-online  { border-color: rgba(122, 184, 90, 0.85); }
 .hud-pill.status-offline { border-color: rgba(245, 190, 65, 0.85); }
+.hud-pill.status-checking {
+  border-color: rgba(255, 215, 0, 0.9);
+  box-shadow: 0 0 0 0 rgba(255, 215, 0, 0.45);
+  animation: hudPulseGold 2s ease-in-out infinite;
+}
 .hud-pill.is-muted       { opacity: 0.8; color: #D8C8A8; }
+
+@keyframes hudPulseGold {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 215, 0, 0.45); }
+  50%      { box-shadow: 0 0 0 5px rgba(255, 215, 0, 0); }
+}
+
+/* ─── Browser Hugging Face AI Loading Banner (Serverless Mode) ─── */
+#hf-loader-banner {
+  position: absolute;
+  top: 48px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(440px, calc(100% - 20px));
+  padding: 10px 13px 9px;
+  border-radius: 10px;
+  background: rgba(34, 20, 12, 0.92);
+  border: 1.5px solid rgba(255, 215, 0, 0.78);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  color: #FDF8F0;
+  font-family: 'Segoe UI', 'Meiryo', sans-serif;
+  z-index: 28;
+  backdrop-filter: blur(4px);
+  transition: opacity 0.25s ease, border-color 0.2s ease;
+}
+
+#hf-loader-banner.hidden { display: none !important; }
+#hf-loader-banner.is-ready { border-color: rgba(122, 206, 94, 0.95); }
+#hf-loader-banner.is-error { border-color: rgba(245, 178, 65, 0.95); }
+
+.hf-loader-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.hf-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2.5px solid rgba(255, 215, 0, 0.28);
+  border-top-color: #FFD700;
+  border-radius: 50%;
+  flex-shrink: 0;
+  animation: hfSpin 0.85s linear infinite;
+}
+
+#hf-loader-banner.is-ready .hf-spinner,
+#hf-loader-banner.is-error .hf-spinner {
+  display: none;
+}
+
+@keyframes hfSpin {
+  to { transform: rotate(360deg); }
+}
+
+#hf-loader-title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  color: #FFFDF7;
+}
+
+#hf-loader-pct {
+  margin-left: auto;
+  font-size: 13px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: #FFD700;
+}
+
+#hf-loader-banner.is-ready #hf-loader-pct { color: #8BE070; }
+#hf-loader-banner.is-error #hf-loader-pct { color: #FFC057; }
+
+.hf-loader-retry {
+  padding: 2px 9px;
+  border-radius: 5px;
+  border: 1px solid rgba(255, 215, 0, 0.75);
+  background: rgba(255, 215, 0, 0.18);
+  color: #FFF6D0;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.hf-loader-retry:hover { background: rgba(255, 215, 0, 0.32); }
+.hf-loader-retry.hidden { display: none; }
+
+.hf-loader-close {
+  background: none;
+  border: none;
+  color: #D8C8B0;
+  font-size: 13px;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.hf-loader-close:hover {
+  background: rgba(255, 255, 255, 0.14);
+  color: #FFFFFF;
+}
+
+.hf-progress-track {
+  position: relative;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.15);
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+
+.hf-progress-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #EAB308 0%, #FFD700 50%, #FDE047 100%);
+  transition: width 0.25s ease;
+}
+
+.hf-progress-fill.is-indeterminate {
+  width: 38% !important;
+  animation: hfIndeterminate 1.4s ease-in-out infinite;
+}
+
+#hf-loader-banner.is-ready .hf-progress-fill {
+  width: 100% !important;
+  background: linear-gradient(90deg, #4CAF50 0%, #81C784 100%);
+  animation: none;
+}
+
+#hf-loader-banner.is-error .hf-progress-fill {
+  background: #F59E0B;
+  animation: none;
+}
+
+@keyframes hfIndeterminate {
+  0%   { transform: translateX(-110%); }
+  100% { transform: translateX(300%); }
+}
+
+.hf-loader-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: #E7DAC6;
+}
+
+#hf-loader-size {
+  font-variant-numeric: tabular-nums;
+  color: #F6DFA0;
+  white-space: nowrap;
+}
 
 .hud-select {
   padding-right: 8px;
@@ -1485,6 +1645,7 @@ select:focus-visible {
     min-width: 260px;
   }
   #controls-hint { display: none; }
+  #hf-loader-banner { top: 84px; }
 }
 
 @media (max-width: 680px) {
@@ -1500,6 +1661,10 @@ select:focus-visible {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .typing-dots span { animation: none; opacity: 0.7; }
+  .typing-dots span,
+  .hf-spinner,
+  .hf-progress-fill.is-indeterminate,
+  .hud-pill.status-checking { animation: none; }
+  .typing-dots span { opacity: 0.7; }
   * { transition-duration: 0.01ms !important; }
 }

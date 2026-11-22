@@ -59,10 +59,15 @@ async function ensureModelLoaded() {
     for (const cfg of candidates) {
       try {
         const fileTotals = new Map();
-        let lastSentPct = 1;
+        let lastSentPct = -1;
+        let lastSentAt = 0;
+        let lastSentStage = "";
         self.postMessage({
           type: "progress",
-          percent: 1,
+          percent: 0,
+          loadedBytes: 0,
+          totalBytes: 0,
+          stage: "connecting",
           modelId: cfg.modelId,
           device: cfg.device,
           status: "init",
@@ -74,27 +79,45 @@ async function ensureModelLoaded() {
           progress_callback: (info) => {
             if (!info) return;
             let pct = null;
+            let sumLoaded = 0;
+            let sumTotal = 0;
             if (info.file && typeof info.loaded === "number" && typeof info.total === "number" && info.total > 0) {
               fileTotals.set(info.file, { loaded: info.loaded, total: info.total });
-              let sumLoaded = 0;
-              let sumTotal = 0;
-              for (const entry of fileTotals.values()) {
-                sumLoaded += entry.loaded;
-                sumTotal += entry.total;
-              }
-              if (sumTotal > 0) {
-                pct = Math.round((sumLoaded / sumTotal) * 100);
-              }
+            } else if (info.file && info.status === "done" && fileTotals.has(info.file)) {
+              const prev = fileTotals.get(info.file);
+              fileTotals.set(info.file, { loaded: prev.total, total: prev.total });
+            }
+
+            for (const entry of fileTotals.values()) {
+              sumLoaded += entry.loaded;
+              sumTotal += entry.total;
+            }
+            if (sumTotal > 0) {
+              pct = Math.round((sumLoaded / sumTotal) * 100);
             } else if (typeof info.progress === "number") {
               pct = Math.round(info.progress);
             }
+
             if (pct !== null) {
-              const clamped = Math.max(1, Math.min(99, pct));
-              if (clamped !== lastSentPct) {
+              const clamped = Math.max(0, Math.min(99, pct));
+              // 主要な ONNX モデルファイルがダウンロード完了し、WebGPU/WASM 初期化へ入った段階を明示
+              const isInitializing = (sumTotal > 50_000_000 && sumLoaded >= sumTotal) || clamped >= 99;
+              const stage = isInitializing
+                ? "initializing"
+                : sumTotal > 0
+                  ? "downloading"
+                  : "connecting";
+              const now = Date.now();
+              if (clamped !== lastSentPct || stage !== lastSentStage || now - lastSentAt >= 350) {
                 lastSentPct = clamped;
+                lastSentStage = stage;
+                lastSentAt = now;
                 self.postMessage({
                   type: "progress",
                   percent: clamped,
+                  loadedBytes: sumLoaded,
+                  totalBytes: sumTotal,
+                  stage,
                   modelId: cfg.modelId,
                   device: cfg.device,
                   status: info.status || "progress",
