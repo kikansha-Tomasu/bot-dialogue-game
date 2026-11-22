@@ -99,7 +99,7 @@ class HuggingFaceClient {
       return;
     }
     try {
-      this._worker = new Worker("js/hf-browser-worker.js?v=gh4", { type: "module" });
+      this._worker = new Worker("js/hf-browser-worker.js?v=gh5", { type: "module" });
       this._workerLoading = true;
       this._workerError = "";
       this._workerStage = "connecting";
@@ -244,7 +244,7 @@ class HuggingFaceClient {
       mode: "browser-transformers-js",
       loading: this._workerLoading,
       progress: this._workerProgress,
-      model: this._workerModel || "onnx-community/Qwen2.5-1.5B-Instruct",
+      model: this._workerModel || "onnx-community/Qwen2.5-0.5B-Instruct",
       device: this._workerDevice || "webgpu/wasm",
       models: this._workerModel ? [this._workerModel] : [],
       error: this._workerError || undefined,

@@ -1187,10 +1187,15 @@ class Game {
         overlay.classList.add("hidden");
       } else {
         overlay.className = "is-error";
+        const errDetail = (this.apiClient._workerError || "").slice(0, 90);
         if (titleEl) titleEl.textContent = "⚠️ Hugging Face AI の読み込みに失敗";
         if (pctEl) pctEl.textContent = "";
-        if (subEl) subEl.textContent = "オフライン応答でそのまま遊べます（自動再試行中）";
-        if (sizeEl) sizeEl.textContent = "";
+        if (subEl) {
+          subEl.textContent = errDetail
+            ? `原因: ${errDetail}`
+            : "オフライン応答でそのまま遊べます（自動再試行中）";
+        }
+        if (sizeEl) sizeEl.textContent = "オフライン応答でプレイ可";
         if (closeBtn) closeBtn.textContent = "オフライン応答で遊ぶ";
         if (fillEl) {
           fillEl.classList.remove("is-indeterminate");
