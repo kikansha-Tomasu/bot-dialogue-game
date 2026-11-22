@@ -132,7 +132,7 @@ class TTSManager {
       return;
     }
     try {
-      this._ttsWorker = new Worker("js/hf-tts-worker.js?v=gh8", { type: "module" });
+      this._ttsWorker = new Worker("js/hf-tts-worker.js?v=gh9", { type: "module" });
       this.browserTtsLoading = true;
       this.browserTtsError = "";
       this._ttsWorker.onmessage = (event) => {
@@ -576,7 +576,8 @@ class TTSManager {
 
     // GitHub Pages 等のサーバーレス環境ではブラウザ内蔵 Hugging Face ニューラル VITS2 音声を使用
     if (!this._isLocalHost) {
-      const playbackRate = characterName === "Carol" ? 1.05 : characterName === "Bob" ? 0.98 : 1.0;
+      // 再生速度(playbackRate)による早送り・音程変化は使わず、VITS2 側の lengthScale のみで自然な話速に制御
+      const playbackRate = 1.0;
       const cacheKey = `${characterName}::${cleanText}`;
       const cached = this._wavCache.get(cacheKey);
       if (cached) {

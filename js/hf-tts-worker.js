@@ -22,9 +22,11 @@ if (ort?.env?.wasm) {
 }
 
 const CHAR_VOICE_PROFILES = {
-  Alice: { model: "tsukuyomi", lengthScale: 0.96, noiseScale: 0.45, noiseW: 0.55 },
-  Bob:   { model: "css10",     lengthScale: 1.03, noiseScale: 0.36, noiseW: 0.46, fallbackLengthScale: 1.08 },
-  Carol: { model: "tsukuyomi", lengthScale: 0.88, noiseScale: 0.54, noiseW: 0.62 },
+  // piper-plus の日本語モデル（特に CSS10）は lengthScale=1.0 だと早口になりやすいため、
+  // 聞き取りやすい自然な会話テンポ（総時間ベース 5.5〜7.2 モーラ/秒）にモデル別調整
+  Alice: { model: "tsukuyomi", lengthScale: 1.36, noiseScale: 0.62, noiseW: 0.78 },
+  Bob:   { model: "css10",     lengthScale: 1.56, noiseScale: 0.58, noiseW: 0.75, fallbackLengthScale: 1.46 },
+  Carol: { model: "tsukuyomi", lengthScale: 1.30, noiseScale: 0.68, noiseW: 0.82 },
 };
 
 let sharedWasmPromise = null;
