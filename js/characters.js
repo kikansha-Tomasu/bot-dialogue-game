@@ -25,7 +25,13 @@ class Character {
     this.wanderTarget = null;
     this.wanderTimer = Math.random() * 5;
     this.isTalking = false;
+    this.isSpeaking = false;
+    this.talkingTo = null;
     this._talkingTimer = null;
+    this._thinkingTimer = null;
+    this._speechSeq = 0;
+    this._activeTypingId = null;
+    this._speakAnimTime = 0;
     this.speechBubble = null;
     this.isTyping = false;
     this.gatherTarget = null;
@@ -75,6 +81,18 @@ class Character {
     this._stuckTimer = 0;
     this._lastCheckX = this.x;
     this._lastCheckY = this.y;
+  }
+
+  faceToward(target) {
+    if (!target) return;
+    const dx = target.x - this.x;
+    const dy = target.y - this.y;
+    if (Math.hypot(dx, dy) < 2) return;
+    if (Math.abs(dx) >= Math.abs(dy)) {
+      this._facing = dx >= 0 ? "right" : "left";
+    } else {
+      this._facing = dy >= 0 ? "down" : "up";
+    }
   }
 
   updateAnimation(vx, vy, dt) {
@@ -235,8 +253,17 @@ class Character {
       this.vx = 0;
       this.vy = 0;
       this.updateAnimation(0, 0, dt);
+      if (this.talkingTo) {
+        this.faceToward(this.talkingTo);
+      }
+      if (this.isSpeaking) {
+        this._speakAnimTime += dt;
+      } else {
+        this._speakAnimTime = 0;
+      }
       return;
     }
+    this._speakAnimTime = 0;
 
     if (this.chatTarget) {
       const dist = Math.hypot(this.chatTarget.x - this.x, this.chatTarget.y - this.y);
@@ -328,20 +355,26 @@ class Character {
 
   updateSpeechBubble(dt) {
     if (this.speechBubble) {
-      this.speechBubble.ttl -= dt;
-      if (this.speechBubble.ttl <= 0) {
-        this.speechBubble = null;
+      if (this.isSpeaking) {
+        // 音声再生中は吹き出しが途中で消えないように維持する
+        this.speechBubble.ttl = Math.max(this.speechBubble.ttl - dt, 0.9);
+      } else {
+        this.speechBubble.ttl -= dt;
+        if (this.speechBubble.ttl <= 0) {
+          this.speechBubble = null;
+        }
       }
     }
   }
 
-  setSpeechBubble(text) {
+  setSpeechBubble(text, durationSec = GAME_CONFIG.speechBubbleDuration) {
     const clean = String(text || "").replace(/^[@＠]\w+\s*/, "").trim();
     const shortened = clean.length > 56 ? clean.slice(0, 54) + "…" : clean;
+    const dur = Math.max(1.5, Number(durationSec) || GAME_CONFIG.speechBubbleDuration);
     this.speechBubble = {
       text: shortened,
-      ttl: GAME_CONFIG.speechBubbleDuration,
-      maxTtl: GAME_CONFIG.speechBubbleDuration,
+      ttl: dur,
+      maxTtl: dur,
     };
   }
 
@@ -380,7 +413,7 @@ class Character {
       ctx.stroke();
     }
 
-    // Typing pulse ring
+    // Typing / Preparing pulse ring
     if (this.isTyping) {
       const pulse = 0.5 + 0.5 * Math.sin(Date.now() / 250);
       ctx.beginPath();
@@ -390,12 +423,24 @@ class Character {
       ctx.stroke();
     }
 
+    // Active speaking ring + gentle audio-synced bobbing motion
+    let speakBobY = 0;
+    if (this.isSpeaking) {
+      const wave = Math.abs(Math.sin(this._speakAnimTime * 9.5));
+      speakBobY = -Math.round(wave * 3.5);
+      ctx.beginPath();
+      ctx.ellipse(x, y + halfH - 2, halfW * (0.85 + wave * 0.25), 8 + wave * 2, 0, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(${this._hexToRgb(this.color)},${0.55 + wave * 0.35})`;
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+    }
+
     // Sprite or fallback avatar
     if (spriteReady) {
-      ctx.drawImage(spriteImg, x - halfW, y - halfH, drawW, drawH);
+      ctx.drawImage(spriteImg, x - halfW, y - halfH + speakBobY, drawW, drawH);
     } else {
       ctx.beginPath();
-      ctx.arc(x, y, 18, 0, Math.PI * 2);
+      ctx.arc(x, y + speakBobY, 18, 0, Math.PI * 2);
       ctx.fillStyle = this.color;
       ctx.fill();
       ctx.strokeStyle = C.charOutline;
@@ -404,7 +449,7 @@ class Character {
       ctx.font = "16px serif";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText(this.emoji || this.name[0], x, y);
+      ctx.fillText(this.emoji || this.name[0], x, y + speakBobY);
     }
 
     // AI の移動目的ミニアイコン

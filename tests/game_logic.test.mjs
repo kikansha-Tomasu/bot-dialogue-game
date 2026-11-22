@@ -750,3 +750,76 @@ test("Serverless GitHub Pages mode: HuggingFaceClient switches to browser-hf and
   assert.equal(health.hf_api.mode, "browser-transformers-js");
   assert.equal(health.tts.local_available, false);
 });
+
+test("Audio-synchronized chat & movement: delays chat until audio starts, holds movement/bubble during speech, resumes on end", async () => {
+  const chars = buildCharacters(800, 600);
+  const alice = chars.find(c => c.id === "alice");
+  const player = chars.find(c => c.id === "player");
+  alice.x = 200;
+  alice.y = 200;
+  player.x = 340;
+  player.y = 200; // Alice の右側
+
+  const cm = new ChatManager();
+  const rm = new ResourceManager();
+  rm.init(800, 600);
+  const api = new HuggingFaceClient();
+  const brain = new AIBrain(chars, cm, api, rm);
+
+  let capturedCallbacks = null;
+  brain.tts = {
+    enabled: true,
+    speak(text, charName, callbacks) {
+      capturedCallbacks = { text, charName, callbacks };
+    },
+  };
+
+  let afterFired = false;
+  brain._presentResponse(alice, "@Player 音声と同期して話すよ！", player.id, player.name, () => {
+    afterFired = true;
+  });
+
+  // 1. 音声準備中：チャットはまだ表示されず、キャラは停止して相手方向（右）を向く
+  assert.ok(capturedCallbacks);
+  assert.equal(cm.messages.length, 0);
+  assert.equal(alice.isTalking, true);
+  assert.equal(alice.isTyping, true);
+  assert.equal(alice.isSpeaking, false);
+  assert.equal(alice._facing, "right");
+  assert.equal(alice.speechBubble, null);
+
+  alice.wanderTarget = { x: 600, y: 400 };
+  alice.wanderTimer = 10;
+  alice.updateWander(0.2, 800, 600, null);
+  assert.equal(alice.x, 200);
+  assert.equal(alice.y, 200);
+
+  // 2. 音声準備完了＆再生開始 (onStart)：チャットと吹き出しが表示され、発話モーション開始
+  capturedCallbacks.callbacks.onStart({ durationSec: 3.5, mode: "hf-audio" });
+  assert.equal(cm.messages.length, 1);
+  assert.equal(cm.messages[0].text, "@Player 音声と同期して話すよ！");
+  assert.equal(alice.isTyping, false);
+  assert.equal(alice.isSpeaking, true);
+  assert.ok(alice.speechBubble);
+
+  // 音声再生中は長時間経過しても吹き出しが消えず、移動も停止したまま発話モーションが進む
+  alice.updateWander(0.25, 800, 600, null);
+  assert.ok(alice._speakAnimTime > 0);
+  assert.equal(alice.x, 200);
+  alice.updateSpeechBubble(10.0);
+  assert.ok(alice.speechBubble && alice.speechBubble.ttl >= 0.9);
+
+  // 3. 音声再生終了 (onEnd)：発話モーション終了・吹き出し残時間短縮→移動再開＆後続トリガー発火
+  capturedCallbacks.callbacks.onEnd({ mode: "hf-audio" });
+  assert.equal(alice.isSpeaking, false);
+  assert.ok(alice.speechBubble.ttl <= 0.9);
+
+  await new Promise(r => setTimeout(r, 420));
+  assert.equal(alice.isTalking, false);
+  assert.equal(alice.talkingTo, null);
+  assert.equal(afterFired, true);
+
+  // 移動再開の確認
+  alice.updateWander(0.2, 800, 600, null);
+  assert.ok(alice.x > 200);
+});

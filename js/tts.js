@@ -10,8 +10,12 @@ class TTSManager {
     this._failCount = 0;
     this._queue = [];
     this._playing = false;
+    this._activeItem = null;
     this._currentAudio = null;
+    this._activeTimers = new Set();
     this._voices = [];
+    this._voicesLoaded = false;
+    this._voiceWaiters = [];
     this.activeVoiceLabel = "ブラウザAI音声";
     this.onStateChange = null;
 
@@ -29,13 +33,49 @@ class TTSManager {
     return h === "127.0.0.1" || h === "localhost" || h === "::1";
   }
 
+  static estimateDurationSec(text) {
+    const clean = TTSManager.sanitizeForSpeech(text);
+    // 日本語おおよそ 5.5 文字/秒 + 息継ぎ余裕
+    return Math.max(1.8, Math.min(12.0, clean.length / 5.5 + 0.6));
+  }
+
+  _setTimer(fn, ms) {
+    const id = setTimeout(() => {
+      this._activeTimers.delete(id);
+      fn();
+    }, ms);
+    this._activeTimers.add(id);
+    return id;
+  }
+
+  _clearTimer(id) {
+    if (id == null) return;
+    clearTimeout(id);
+    this._activeTimers.delete(id);
+  }
+
+  _clearAllTimers() {
+    for (const id of this._activeTimers) {
+      clearTimeout(id);
+    }
+    this._activeTimers.clear();
+  }
+
   _initBrowserVoices() {
     if (typeof window === "undefined" || !window.speechSynthesis) return;
     const refresh = () => {
       try {
-        this._voices = window.speechSynthesis.getVoices() || [];
-        const best = this._selectNaturalJapaneseVoice("female");
-        if (best) this.activeVoiceLabel = best.name;
+        const list = window.speechSynthesis.getVoices() || [];
+        this._voices = list;
+        if (list.length > 0) {
+          this._voicesLoaded = true;
+          const best = this._selectNaturalJapaneseVoice("female");
+          if (best) this.activeVoiceLabel = best.name;
+          while (this._voiceWaiters.length > 0) {
+            const resolve = this._voiceWaiters.shift();
+            resolve();
+          }
+        }
       } catch (_) {}
     };
     refresh();
@@ -44,6 +84,33 @@ class TTSManager {
     } else {
       window.speechSynthesis.onvoiceschanged = refresh;
     }
+  }
+
+  _waitForVoicesReady(timeoutMs = 700) {
+    if (this._voicesLoaded || typeof window === "undefined" || !window.speechSynthesis) {
+      return Promise.resolve();
+    }
+    try {
+      const list = window.speechSynthesis.getVoices() || [];
+      if (list.length > 0) {
+        this._voices = list;
+        this._voicesLoaded = true;
+        return Promise.resolve();
+      }
+    } catch (_) {
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        this._clearTimer(timer);
+        resolve();
+      };
+      const timer = this._setTimer(finish, timeoutMs);
+      this._voiceWaiters.push(finish);
+    });
   }
 
   _selectNaturalJapaneseVoice(gender = "female") {
@@ -105,11 +172,36 @@ class TTSManager {
     return this.enabled;
   }
 
+  _finalizeItem(item, mode = "cancelled") {
+    if (!item) return;
+    item.cancelled = true;
+    if (!item.started) {
+      item.started = true;
+      try { item.onStart?.({ durationSec: 0, mode }); } catch (_) {}
+    }
+    if (!item.ended) {
+      item.ended = true;
+      try { item.onEnd?.({ mode }); } catch (_) {}
+    }
+    if (item._blobUrl) {
+      try { URL.revokeObjectURL(item._blobUrl); } catch (_) {}
+      item._blobUrl = null;
+    }
+  }
+
   stop() {
+    const pending = [...this._queue];
     this._queue = [];
+    const active = this._activeItem;
+    this._activeItem = null;
     this._playing = false;
+    this._clearAllTimers();
+
     if (this._currentAudio) {
       try {
+        this._currentAudio.onended = null;
+        this._currentAudio.onerror = null;
+        this._currentAudio.onplaying = null;
         this._currentAudio.pause();
         this._currentAudio.src = "";
       } catch (_) {}
@@ -117,6 +209,11 @@ class TTSManager {
     }
     if (typeof window !== "undefined" && window.speechSynthesis) {
       try { window.speechSynthesis.cancel(); } catch (_) {}
+    }
+
+    if (active) this._finalizeItem(active, "cancelled");
+    for (const item of pending) {
+      this._finalizeItem(item, "cancelled");
     }
   }
 
@@ -146,10 +243,42 @@ class TTSManager {
     if (this.onStateChange) this.onStateChange(this.enabled, this.localAvailable);
   }
 
-  speak(text, characterName) {
-    if (!this.enabled) return;
-    if (this._queue.length >= 6) this._queue.shift();
-    this._queue.push({ text, characterName });
+  /**
+   * 音声を事前に準備（合成・ロード）し、再生開始と同時に onStart、再生終了時に onEnd を発火する。
+   * これによりチャット表示・吹き出し・キャラクターの動きを音声再生と完全に同期できる。
+   */
+  speak(text, characterName, callbacks = {}) {
+    const onStart = typeof callbacks === "function" ? callbacks : callbacks?.onStart;
+    const onEnd = typeof callbacks === "object" ? callbacks?.onEnd : undefined;
+    const clean = TTSManager.sanitizeForSpeech(text);
+
+    if (!this.enabled || !clean || typeof window === "undefined") {
+      try { onStart?.({ durationSec: 0, mode: "muted" }); } catch (_) {}
+      try { onEnd?.({ mode: "muted" }); } catch (_) {}
+      return;
+    }
+
+    if (this._queue.length >= 6) {
+      const dropped = this._queue.shift();
+      this._finalizeItem(dropped, "dropped");
+    }
+
+    const item = {
+      text,
+      clean,
+      characterName,
+      onStart,
+      onEnd,
+      started: false,
+      ended: false,
+      cancelled: false,
+      _blobUrl: null,
+      preparePromise: null,
+    };
+    // キュー待機中でも先に音声データを合成・準備しておく（再生のテンポを上げる）
+    item.preparePromise = this._prepareAudio(clean, characterName, item);
+
+    this._queue.push(item);
     if (!this._playing) this._processNext();
   }
 
@@ -170,29 +299,19 @@ class TTSManager {
       .trim();
   }
 
-  _processNext() {
-    if (!this.enabled || this._queue.length === 0) {
-      this._playing = false;
-      return;
-    }
-    this._playing = true;
-    const { text, characterName } = this._queue.shift();
-    const clean = TTSManager.sanitizeForSpeech(text);
-    if (!clean) {
-      this._processNext();
-      return;
-    }
-    this._speak(clean, characterName).finally(() => this._processNext());
+  _getCharConfig(characterName) {
+    return (typeof AI_CHARACTERS_CONFIG !== "undefined" ? AI_CHARACTERS_CONFIG : [])
+      .find(c => c.name === characterName)?.ttsConfig || {};
   }
 
-  async _speak(text, characterName) {
-    const cfg = (typeof AI_CHARACTERS_CONFIG !== "undefined" ? AI_CHARACTERS_CONFIG : [])
-      .find(c => c.name === characterName)?.ttsConfig || {};
+  async _prepareAudio(cleanText, characterName, item) {
+    const cfg = this._getCharConfig(characterName);
+    const estDuration = TTSManager.estimateDurationSec(cleanText);
 
-    // GitHub Pages 等のサーバーレス環境ではブラウザ内蔵の自然ニューラル日本語音声を使用
+    // GitHub Pages 等のサーバーレス環境ではブラウザ自然日本語音声を準備
     if (!this._isLocalHost) {
-      await this._speakFallback(text, cfg);
-      return;
+      await this._waitForVoicesReady(700);
+      return { kind: "speech", clean: cleanText, cfg, durationSec: estDuration };
     }
 
     const voice = cfg.ttsModel ?? "amitaro";
@@ -206,7 +325,7 @@ class TTSManager {
       const resp = await fetch("/tts-local", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, voice, speed, style }),
+        body: JSON.stringify({ text: cleanText, voice, speed, style }),
         ...(controller ? { signal: controller.signal } : {}),
       });
       if (timer) clearTimeout(timer);
@@ -214,39 +333,166 @@ class TTSManager {
         this._failCount++;
         this.localAvailable = false;
         if (this.onStateChange) this.onStateChange(this.enabled, this.localAvailable);
-        await this._speakFallback(text, cfg);
-        return;
+        await this._waitForVoicesReady(500);
+        return { kind: "speech", clean: cleanText, cfg, durationSec: estDuration };
       }
+
       this._failCount = 0;
       this.localAvailable = true;
       if (this.onStateChange) this.onStateChange(this.enabled, this.localAvailable);
-      if (!this.enabled) return;
+
       const blob = await resp.blob();
+      if (item.cancelled || !this.enabled) {
+        return { kind: "cancelled", durationSec: 0 };
+      }
+
       const url = URL.createObjectURL(blob);
+      item._blobUrl = url;
       const audio = new Audio(url);
-      this._currentAudio = audio;
+      audio.preload = "auto";
+
+      // 音声メタデータ / 再生準備完了まで待機（再生開始の瞬間にチャットを表示するため）
       await new Promise((resolve) => {
-        audio.onended = resolve;
-        audio.onerror = () => { console.warn("[TTS] audio play error"); resolve(); };
-        audio.play().catch(() => resolve());
+        if (audio.readyState >= 2) {
+          resolve();
+          return;
+        }
+        let done = false;
+        const finish = () => {
+          if (done) return;
+          done = true;
+          clearTimeout(metaTimer);
+          resolve();
+        };
+        const metaTimer = setTimeout(finish, 1500);
+        audio.addEventListener("canplay", finish, { once: true });
+        audio.addEventListener("loadedmetadata", finish, { once: true });
+        audio.addEventListener("error", finish, { once: true });
+        try { audio.load(); } catch (_) { finish(); }
       });
-      this._currentAudio = null;
-      URL.revokeObjectURL(url);
-    } catch (err) {
+
+      const realDur = (isFinite(audio.duration) && audio.duration > 0.1)
+        ? audio.duration
+        : estDuration;
+      return { kind: "audio", audio, url, durationSec: realDur };
+    } catch (_) {
       if (timer) clearTimeout(timer);
       this._failCount++;
       this.localAvailable = false;
       if (this.onStateChange) this.onStateChange(this.enabled, this.localAvailable);
-      await this._speakFallback(text, cfg);
+      await this._waitForVoicesReady(500);
+      return { kind: "speech", clean: cleanText, cfg, durationSec: estDuration };
     }
   }
 
-  _speakFallback(text, cfg = {}) {
+  _processNext() {
+    if (!this.enabled || this._queue.length === 0) {
+      this._playing = false;
+      this._activeItem = null;
+      return;
+    }
+    this._playing = true;
+    const item = this._queue.shift();
+    this._activeItem = item;
+    this._playItem(item).finally(() => {
+      if (this._activeItem === item) {
+        this._activeItem = null;
+      }
+      this._processNext();
+    });
+  }
+
+  async _playItem(item) {
+    let prepared;
+    try {
+      prepared = await item.preparePromise;
+    } catch (_) {
+      prepared = {
+        kind: "speech",
+        clean: item.clean,
+        cfg: this._getCharConfig(item.characterName),
+        durationSec: TTSManager.estimateDurationSec(item.clean),
+      };
+    }
+
+    if (item.cancelled || !this.enabled || prepared?.kind === "cancelled") {
+      this._finalizeItem(item, "cancelled");
+      return;
+    }
+
+    const fireStart = (mode, durationSec) => {
+      if (item.started || item.cancelled) return;
+      item.started = true;
+      try { item.onStart?.({ durationSec, mode }); } catch (_) {}
+    };
+    const fireEnd = (mode) => {
+      if (item.ended) return;
+      if (!item.started) fireStart(mode, 0);
+      item.ended = true;
+      try { item.onEnd?.({ mode }); } catch (_) {}
+    };
+
+    if (prepared.kind === "audio") {
+      const { audio, url, durationSec } = prepared;
+      this._currentAudio = audio;
+      await new Promise((resolve) => {
+        let finished = false;
+        const done = (mode = "hf-audio") => {
+          if (finished) return;
+          finished = true;
+          this._clearTimer(safetyTimer);
+          if (this._currentAudio === audio) this._currentAudio = null;
+          if (item._blobUrl === url) {
+            try { URL.revokeObjectURL(url); } catch (_) {}
+            item._blobUrl = null;
+          }
+          fireEnd(mode);
+          resolve();
+        };
+
+        const safetyTimer = this._setTimer(
+          () => done("hf-audio-timeout"),
+          Math.max(5000, Math.round((durationSec + 4) * 1000))
+        );
+
+        audio.onplaying = () => fireStart("hf-audio", durationSec);
+        audio.onended = () => done("hf-audio");
+        audio.onerror = () => done("hf-audio-error");
+
+        const playPromise = audio.play();
+        if (playPromise && typeof playPromise.then === "function") {
+          playPromise
+            .then(() => fireStart("hf-audio", durationSec))
+            .catch(() => {
+              // ブラウザの自動再生ポリシーでブロックされた場合もチャットを表示し、読み上げ相当時間だけ待機
+              const fallbackMs = Math.max(1800, Math.min(4500, Math.round(durationSec * 800)));
+              fireStart("autoplay-blocked", fallbackMs / 1000);
+              this._clearTimer(safetyTimer);
+              this._setTimer(() => done("autoplay-blocked"), fallbackMs);
+            });
+        } else {
+          fireStart("hf-audio", durationSec);
+        }
+      });
+      return;
+    }
+
+    // ブラウザ内蔵の自然日本語音声（Web Speech API）
+    await this._playSpeechFallback(item, prepared.clean, prepared.cfg, prepared.durationSec, fireStart, fireEnd);
+  }
+
+  _playSpeechFallback(item, text, cfg, durationSec, fireStart, fireEnd) {
     return new Promise((resolve) => {
-      if (!this.enabled || typeof window === "undefined" || !window.speechSynthesis) {
-        resolve();
+      if (!this.enabled || item.cancelled || typeof window === "undefined" || !window.speechSynthesis) {
+        const waitMs = Math.max(1600, Math.min(4000, Math.round(durationSec * 800)));
+        fireStart("no-speech", waitMs / 1000);
+        this._setTimer(() => {
+          fireEnd("no-speech");
+          resolve();
+        }, waitMs);
         return;
       }
+
       const utt = new SpeechSynthesisUtterance(text);
       utt.lang = "ja-JP";
       const naturalVoice = this._selectNaturalJapaneseVoice(cfg.gender || "female");
@@ -256,9 +502,40 @@ class TTSManager {
       }
       utt.pitch = Math.max(0.85, Math.min(1.25, cfg.pitch ?? 1.0));
       utt.rate  = Math.max(0.90, Math.min(1.15, cfg.rate  ?? 1.0));
-      utt.onend = resolve;
-      utt.onerror = () => resolve();
-      window.speechSynthesis.speak(utt);
+
+      let finished = false;
+      const done = (mode = "browser-speech") => {
+        if (finished) return;
+        finished = true;
+        this._clearTimer(startGuard);
+        this._clearTimer(endGuard);
+        fireEnd(mode);
+        resolve();
+      };
+
+      // 一部ブラウザで onstart が発火しない場合でもチャットが止まらないよう保護
+      const startGuard = this._setTimer(
+        () => fireStart("browser-speech", durationSec),
+        350
+      );
+      // Chromium の SpeechSynthesis 無応答バグ防止用タイムアウト
+      const endGuard = this._setTimer(
+        () => done("browser-speech-timeout"),
+        Math.max(4500, Math.round(text.length * 260 + 2500))
+      );
+
+      utt.onstart = () => {
+        this._clearTimer(startGuard);
+        fireStart("browser-speech", durationSec);
+      };
+      utt.onend = () => done("browser-speech");
+      utt.onerror = () => done("browser-speech-error");
+
+      try {
+        window.speechSynthesis.speak(utt);
+      } catch (_) {
+        done("browser-speech-error");
+      }
     });
   }
 }

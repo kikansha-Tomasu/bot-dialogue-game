@@ -60,7 +60,7 @@ class AIBrain {
         }
       }
 
-      if (this.isProcessing[c.id] || c.gatherTarget || c.chatTarget) return;
+      if (this.isProcessing[c.id] || c.gatherTarget || c.chatTarget || c.isTalking) return;
       this.chatTimers[c.id] -= dt;
       if (this.chatTimers[c.id] <= 0) {
         this._resetTimer(c.id);
@@ -758,18 +758,53 @@ class AIBrain {
     this.chatTimers[id] = min + Math.random() * (max - min);
   }
 
-  // 応答後の2段階演出: 考え中 → 発言 → 再開（タイマー重複を安全に制御）
+  _getTTS() {
+    if (this.tts) return this.tts;
+    return typeof ttsManager !== "undefined" ? ttsManager : null;
+  }
+
+  // 音声同期プレゼンテーション:
+  // 1. 準備中: 移動停止・相手方向を向く・思考パルス表示（チャット本文はまだ表示しない）
+  // 2. 音声準備完了＆再生開始(onStart): チャット表示・吹き出し表示・発話モーション開始
+  // 3. 再生終了(onEnd): 発話モーション終了・移動再開・後続会話トリガー
   _presentResponse(char, response, recipientId, recipientName, triggerAfter) {
-    char.isTalking = true;
-    char.isTyping = true;
+    const seq = (char._speechSeq || 0) + 1;
+    char._speechSeq = seq;
+
     if (char._talkingTimer) {
       clearTimeout(char._talkingTimer);
       char._talkingTimer = null;
     }
-    const typingId = this.chatManager.addTypingIndicator(char.name, char.color, recipientName);
+    if (char._thinkingTimer) {
+      clearTimeout(char._thinkingTimer);
+      char._thinkingTimer = null;
+    }
+    if (char._activeTypingId) {
+      this.chatManager.removeTypingIndicator(char._activeTypingId);
+      char._activeTypingId = null;
+    }
 
-    setTimeout(() => {
-      char.isTyping = false;
+    const recipient = this.characters.find(c => c.id === recipientId) || null;
+    char.isTalking = true;
+    char.isTyping = true;
+    char.isSpeaking = false;
+    char.talkingTo = recipient;
+    if (recipient && typeof char.faceToward === "function") {
+      char.faceToward(recipient);
+    }
+
+    const typingId = this.chatManager.addTypingIndicator(char.name, char.color, recipientName);
+    char._activeTypingId = typingId;
+
+    let revealed = false;
+    let finished = false;
+
+    const revealChat = (durationSec = 0) => {
+      if (revealed) return;
+      revealed = true;
+      if (char._activeTypingId === typingId) {
+        char._activeTypingId = null;
+      }
       this.chatManager.removeTypingIndicator(typingId);
 
       this.chatManager.addMessage({
@@ -781,19 +816,63 @@ class AIBrain {
         text: response,
         isAI: true,
       });
-      char.setSpeechBubble(response);
-      if (typeof ttsManager !== "undefined" && ttsManager) {
-        ttsManager.speak(response, char.name);
-      }
 
-      if (triggerAfter) triggerAfter();
+      if (char._speechSeq === seq) {
+        char.isTyping = false;
+        char.isSpeaking = true;
+        if (recipient && typeof char.faceToward === "function") {
+          char.faceToward(recipient);
+        }
+        const bubbleSec = durationSec > 0
+          ? Math.max(2.5, durationSec + 1.0)
+          : GAME_CONFIG.speechBubbleDuration;
+        char.setSpeechBubble(response, bubbleSec);
+      }
+    };
+
+    const finishSpeaking = () => {
+      if (finished) return;
+      finished = true;
+      if (!revealed) revealChat(0);
+      if (char._speechSeq !== seq) return;
+
+      char.isTyping = false;
+      char.isSpeaking = false;
+      if (char.speechBubble) {
+        char.speechBubble.ttl = Math.min(char.speechBubble.ttl, 0.9);
+      }
 
       if (char._talkingTimer) clearTimeout(char._talkingTimer);
       char._talkingTimer = setTimeout(() => {
+        if (char._speechSeq !== seq) return;
         char.isTalking = false;
+        char.talkingTo = null;
         char._talkingTimer = null;
-      }, GAME_CONFIG.speechBubbleDuration * 1000);
-    }, GAME_CONFIG.thinkingDisplayDuration);
+        if (triggerAfter) triggerAfter();
+      }, 350);
+    };
+
+    const tts = this._getTTS();
+    if (tts && tts.enabled && typeof tts.speak === "function") {
+      tts.speak(response, char.name, {
+        onStart: ({ durationSec } = {}) => revealChat(durationSec || 0),
+        onEnd: () => finishSpeaking(),
+      });
+    } else {
+      // 音声OFF時は短い演出テンポでチャット表示→会話時間経過後に移動再開
+      char._thinkingTimer = setTimeout(() => {
+        char._thinkingTimer = null;
+        if (char._speechSeq !== seq) {
+          this.chatManager.removeTypingIndicator(typingId);
+          return;
+        }
+        const holdSec = Math.min(GAME_CONFIG.speechBubbleDuration, Math.max(2.2, response.length * 0.08));
+        revealChat(holdSec);
+        char._talkingTimer = setTimeout(() => {
+          finishSpeaking();
+        }, Math.round(holdSec * 1000));
+      }, GAME_CONFIG.thinkingDisplayDuration);
+    }
   }
 
   async _initiateChat(initiator, predeterminedTarget = null) {
@@ -802,6 +881,12 @@ class AIBrain {
 
     const others = this.characters.filter(c => c.id !== initiator.id);
     const target = predeterminedTarget ?? others[Math.floor(Math.random() * others.length)];
+
+    // 会話生成中から立ち止まって相手の方を向く
+    initiator.isTalking = true;
+    initiator.isTyping = true;
+    initiator.talkingTo = target;
+    if (typeof initiator.faceToward === "function") initiator.faceToward(target);
 
     const pendingMsg = initiator._pendingChatMessage ?? null;
     initiator._pendingChatMessage = null;
@@ -872,6 +957,10 @@ ${econContext}
   async _triggerReply(responder, originalSender, originalText, depth = 1) {
     if (this.isProcessing[responder.id]) return;
     this.isProcessing[responder.id] = true;
+    responder.isTalking = true;
+    responder.isTyping = true;
+    responder.talkingTo = originalSender;
+    if (typeof responder.faceToward === "function") responder.faceToward(originalSender);
 
     try {
       const strippedText = originalText.replace(/^[@＠]\w+\s*/, "").trim();
@@ -907,6 +996,10 @@ ${econContext}
       this._presentResponse(responder, response, originalSender.id, originalSender.name, triggerAfter);
     } catch (err) {
       console.warn(`[AIBrain] ${responder.name} reply fallback:`, err.message);
+      responder.isTalking = false;
+      responder.isTyping = false;
+      responder.isSpeaking = false;
+      responder.talkingTo = null;
     } finally {
       this.isProcessing[responder.id] = false;
       this._drainPendingPlayerMessage(responder);
@@ -923,6 +1016,10 @@ ${econContext}
       return;
     }
     this.isProcessing[targetChar.id] = true;
+    targetChar.isTalking = true;
+    targetChar.isTyping = true;
+    targetChar.talkingTo = player;
+    if (typeof targetChar.faceToward === "function") targetChar.faceToward(player);
 
     try {
       const strippedMessage = playerMessage.replace(/^[@＠]\w+\s*/, "").trim();
