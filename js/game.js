@@ -856,6 +856,7 @@ class Game {
     const syncTtsBtn = () => {
       if (!ttsBtn || typeof ttsManager === "undefined" || !ttsManager) return;
       const on = ttsManager.enabled;
+      const blocked = Boolean(on && ttsManager.autoplayBlocked);
       const isHfLocal = ttsManager.localAvailable === true;
       const isHfBrowser = !ttsManager._isLocalHost && ttsManager.browserTtsReady;
       const isHfBrowserLoading = !ttsManager._isLocalHost && ttsManager.browserTtsLoading;
@@ -868,19 +869,40 @@ class Game {
             : `自然日本語ブラウザ音声 (${ttsManager.activeVoiceLabel || "Web Speech API"})`;
       ttsBtn.textContent = !on
         ? "🔇 音声OFF"
-        : (isHfLocal || isHfBrowser)
-          ? "🔊 HF音声ON"
-          : isHfBrowserLoading
-            ? `⏳ HF音声 ${ttsManager.browserTtsProgress || 0}%`
-            : "🔊 ブラウザ音声";
-      ttsBtn.setAttribute("aria-pressed", String(on));
-      ttsBtn.title = on ? `読み上げON（${modeLabel}）— クリックでミュート` : "読み上げOFF — クリックで有効化";
+        : blocked
+          ? "🔇 タップで音ON"
+          : (isHfLocal || isHfBrowser)
+            ? "🔊 HF音声ON"
+            : isHfBrowserLoading
+              ? `⏳ HF音声 ${ttsManager.browserTtsProgress || 0}%`
+              : "🔊 ブラウザ音声";
+      ttsBtn.setAttribute("aria-pressed", String(on && !blocked));
+      ttsBtn.title = !on
+        ? "読み上げOFF — クリックで有効化"
+        : blocked
+          ? "ブラウザが自動再生を保留中 — ここまたは画面内をクリックすると音声が流れます"
+          : `読み上げON（${modeLabel}）— クリックでミュート`;
       ttsBtn.classList.toggle("is-muted", !on);
+      ttsBtn.classList.toggle("status-checking", blocked);
+
+      if (blocked && !this._autoplayHintShown) {
+        this._autoplayHintShown = true;
+        this.chatManager?.addMessage({
+          senderId: "system",
+          senderName: "音声案内",
+          senderColor: "#8A6218",
+          recipientId: this.player?.id || "player",
+          recipientName: this.player?.name || "Player",
+          text: "🔇 ブラウザの自動再生制限で音声が保留中です。画面内または上部の「タップで音ON」をクリックすると再生されます。",
+          isAI: false,
+        });
+      }
     };
 
     if (ttsBtn && typeof ttsManager !== "undefined" && ttsManager) {
       ttsManager.onStateChange = syncTtsBtn;
       ttsBtn.addEventListener("click", () => {
+        ttsManager.unlockAudio(true);
         ttsManager.toggle();
         syncTtsBtn();
         ttsBtn.blur();
@@ -901,10 +923,12 @@ class Game {
     });
     document.getElementById("hf-loader-close")?.addEventListener("click", e => {
       e.currentTarget.blur();
+      if (typeof ttsManager !== "undefined" && ttsManager) ttsManager.unlockAudio(true);
       this._hfBannerDismissed = true;
       document.getElementById("hf-loader-overlay")?.classList.add("hidden");
     });
     document.getElementById("hf-loader-overlay")?.addEventListener("click", e => {
+      if (typeof ttsManager !== "undefined" && ttsManager) ttsManager.unlockAudio(true);
       if (e.target === e.currentTarget) {
         this._hfBannerDismissed = true;
         e.currentTarget.classList.add("hidden");
@@ -1157,7 +1181,7 @@ class Game {
         } else {
           overlay.className = "is-loading";
           retryEl?.classList.add("hidden");
-          if (closeBtn) closeBtn.textContent = "▶ 読み込みを待ちながら先に遊ぶ";
+          if (closeBtn) closeBtn.textContent = "▶ 音声を有効にして遊ぶ";
           if (trackEl) trackEl.setAttribute("aria-valuenow", String(pct));
           if (titleEl) {
             titleEl.textContent = isInit

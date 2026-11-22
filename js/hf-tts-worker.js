@@ -23,7 +23,7 @@ if (ort?.env?.wasm) {
 
 const CHAR_VOICE_PROFILES = {
   Alice: { model: "tsukuyomi", lengthScale: 0.96, noiseScale: 0.45, noiseW: 0.55 },
-  Bob:   { model: "css10",     lengthScale: 1.03, noiseScale: 0.36, noiseW: 0.46 },
+  Bob:   { model: "css10",     lengthScale: 1.03, noiseScale: 0.36, noiseW: 0.46, fallbackLengthScale: 1.08 },
   Carol: { model: "tsukuyomi", lengthScale: 0.88, noiseScale: 0.54, noiseW: 0.62 },
 };
 
@@ -48,7 +48,7 @@ function getSharedWasmModule() {
   return sharedWasmPromise;
 }
 
-function ensureVoiceLoaded(modelKey) {
+function ensureVoiceLoaded(modelKey, reportProgress = true) {
   if (voiceInstances.has(modelKey)) {
     return Promise.resolve(voiceInstances.get(modelKey));
   }
@@ -57,12 +57,14 @@ function ensureVoiceLoaded(modelKey) {
   }
 
   const p = (async () => {
-    self.postMessage({
-      type: "progress",
-      model: modelKey,
-      percent: 10,
-      stage: "loading",
-    });
+    if (reportProgress) {
+      self.postMessage({
+        type: "progress",
+        model: modelKey,
+        percent: 10,
+        stage: "loading",
+      });
+    }
 
     const instance = await PiperPlus.initialize({
       model: modelKey,
@@ -70,6 +72,7 @@ function ensureVoiceLoaded(modelKey) {
       wasmLoader: () => getSharedWasmModule(),
       showModelNotice: false,
       onProgress: ({ stage, progress } = {}) => {
+        if (!reportProgress) return;
         const raw = typeof progress === "number" ? progress : 0;
         const pct = stage === "phonemizer"
           ? Math.round(70 + raw * 28)
@@ -105,15 +108,47 @@ function enqueue(fn) {
   return next;
 }
 
+/**
+ * 16-bit PCM WAV データの音量を聞き取りやすいピーク水準へ正規化する
+ */
+function normalizeWavBuffer(wavBuffer, targetPeak = 0.88, maxGain = 4.5) {
+  if (!wavBuffer || wavBuffer.byteLength <= 44) return wavBuffer;
+  const view = new DataView(wavBuffer);
+  // RIFF / WAVE ヘッダ確認
+  if (view.getUint32(0, false) !== 0x52494646 || view.getUint16(20, true) !== 1) {
+    return wavBuffer;
+  }
+  const bitsPerSample = view.getUint16(34, true);
+  if (bitsPerSample !== 16) return wavBuffer;
+
+  const sampleCount = Math.floor((wavBuffer.byteLength - 44) / 2);
+  let maxAbs = 0;
+  for (let i = 0; i < sampleCount; i++) {
+    const a = Math.abs(view.getInt16(44 + i * 2, true));
+    if (a > maxAbs) maxAbs = a;
+  }
+  if (maxAbs < 16) return wavBuffer; // 完全無音なら触らない
+
+  const gain = Math.min(maxGain, (targetPeak * 32767) / maxAbs);
+  if (gain <= 1.08) return wavBuffer;
+
+  for (let i = 0; i < sampleCount; i++) {
+    const off = 44 + i * 2;
+    const scaled = Math.round(view.getInt16(off, true) * gain);
+    view.setInt16(off, Math.max(-32768, Math.min(32767, scaled)), true);
+  }
+  return wavBuffer;
+}
+
 self.onmessage = async (event) => {
   const msg = event.data || {};
 
   if (msg.type === "preload") {
     try {
       // まず女性モデル（つくよみちゃん: Alice & Carol）を読み込み完了させる
-      await enqueue(() => ensureVoiceLoaded("tsukuyomi"));
-      // 続けて男性モデル（CSS10: Bob）を裏で先読み
-      enqueue(() => ensureVoiceLoaded("css10")).catch((err) => {
+      await ensureVoiceLoaded("tsukuyomi", true);
+      // 男性モデル（CSS10: Bob）は推論キューを塞がないようキュー外で静かに先読みする
+      ensureVoiceLoaded("css10", false).catch((err) => {
         console.warn("[HF TTS Worker] css10 background preload skipped:", err?.message || err);
       });
     } catch (err) {
@@ -129,28 +164,33 @@ self.onmessage = async (event) => {
     const { requestId, text, characterName } = msg;
     const profile = CHAR_VOICE_PROFILES[characterName] || CHAR_VOICE_PROFILES.Alice;
     try {
+      // tsukuyomi が未ロードなら待機（初回のみ）。css10 ダウンロード中はブロックせず tsukuyomi で即代用する。
+      await ensureVoiceLoaded("tsukuyomi", true);
+
       const { wavBuffer, durationSec, usedModel } = await enqueue(async () => {
         let usedModel = profile.model;
-        let instance;
-        try {
-          instance = await ensureVoiceLoaded(profile.model);
-        } catch (err) {
+        let instance = voiceInstances.get(profile.model);
+        let lengthScale = profile.lengthScale;
+
+        if (!instance) {
+          usedModel = "tsukuyomi";
+          instance = voiceInstances.get("tsukuyomi");
+          if (profile.fallbackLengthScale) {
+            lengthScale = profile.fallbackLengthScale;
+          }
+          // 次回以降に向けて css10 の読込も裏で継続
           if (profile.model !== "tsukuyomi") {
-            console.warn(`[HF TTS Worker] ${profile.model} failed, falling back to tsukuyomi:`, err?.message || err);
-            usedModel = "tsukuyomi";
-            instance = await ensureVoiceLoaded("tsukuyomi");
-          } else {
-            throw err;
+            ensureVoiceLoaded(profile.model, false).catch(() => {});
           }
         }
 
         const result = await instance.synthesize(String(text || ""), {
           language: "ja",
-          lengthScale: profile.lengthScale,
+          lengthScale,
           noiseScale: profile.noiseScale,
           noiseW: profile.noiseW,
         });
-        const wavBuffer = result.toWav();
+        const wavBuffer = normalizeWavBuffer(result.toWav());
         const durationSec = typeof result.duration === "number" && isFinite(result.duration)
           ? result.duration
           : 0;

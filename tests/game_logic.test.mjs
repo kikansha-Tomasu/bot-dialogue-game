@@ -755,6 +755,16 @@ test("Serverless GitHub Pages mode: HuggingFaceClient switches to browser-hf and
   tts._cacheWav("Alice::テスト", dummyWav);
   assert.equal(tts._wavCache.has("Alice::テスト"), true);
   assert.equal(tts._wavCache.get("Alice::テスト").byteLength, 128);
+
+  // 5. 自動再生ブロック中および解除直後(600ms以内)の toggle() で勝手に音声OFFにならず、通常時は正しく切替できること
+  tts.enabled = true;
+  tts.autoplayBlocked = true;
+  assert.equal(tts.toggle(), true);
+  tts.autoplayBlocked = false;
+  tts._unblockedAtMs = Date.now();
+  assert.equal(tts.toggle(), true);
+  tts._unblockedAtMs = Date.now() - 1000;
+  assert.equal(tts.toggle(), false);
 });
 
 test("Audio-synchronized chat & movement: delays chat until audio starts, holds movement/bubble during speech, resumes on end", async () => {

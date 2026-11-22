@@ -12,6 +12,12 @@ class TTSManager {
     this._playing = false;
     this._activeItem = null;
     this._currentAudio = null;
+    this._currentSource = null;
+    this._audioCtx = null;
+    this.audioUnlocked = false;
+    this.autoplayBlocked = false;
+    this._blockedReplay = null;
+    this._unblockedAtMs = 0;
     this._activeTimers = new Set();
     this._voices = [];
     this._voicesLoaded = false;
@@ -30,6 +36,7 @@ class TTSManager {
     this._wavCache = new Map();
 
     if (typeof window !== "undefined") {
+      this._installAudioUnlockHooks();
       this._initBrowserVoices();
       if (typeof fetch !== "undefined") {
         this._checkAvailability();
@@ -38,6 +45,81 @@ class TTSManager {
         this._initBrowserTtsWorker();
       }
     }
+  }
+
+  _getAudioContext() {
+    if (this._audioCtx) return this._audioCtx;
+    if (typeof window === "undefined") return null;
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return null;
+    try {
+      this._audioCtx = new AudioCtx();
+      return this._audioCtx;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  unlockAudio(replayIfBlocked = true) {
+    if (typeof window === "undefined") return false;
+    const ctx = this._getAudioContext();
+    if (!ctx) return false;
+
+    const onUnlocked = () => {
+      this.audioUnlocked = true;
+      const wasBlocked = this.autoplayBlocked;
+      this.autoplayBlocked = false;
+      if (wasBlocked) {
+        this._unblockedAtMs = Date.now();
+      }
+      try {
+        // iOS / Safari / Chrome 向けに無音1サンプルを流して出力パイプを開く
+        const buf = ctx.createBuffer(1, 1, 22050);
+        const src = ctx.createBufferSource();
+        src.buffer = buf;
+        src.connect(ctx.destination);
+        src.start(0);
+      } catch (_) {}
+      if (wasBlocked && this.onStateChange) {
+        this.onStateChange(this.enabled, this.localAvailable);
+      }
+      if (replayIfBlocked && wasBlocked && this._blockedReplay && this.enabled && !this._playing && this._queue.length === 0) {
+        const replay = this._blockedReplay;
+        this._blockedReplay = null;
+        this.speak(replay.text, replay.characterName);
+      }
+    };
+
+    try {
+      if (ctx.state === "running") {
+        onUnlocked();
+        return true;
+      }
+      const p = ctx.resume();
+      if (p && typeof p.then === "function") {
+        p.then(() => {
+          if (ctx.state === "running") onUnlocked();
+        }).catch(() => {});
+      }
+    } catch (_) {}
+    return ctx.state === "running";
+  }
+
+  _installAudioUnlockHooks() {
+    if (typeof window === "undefined") return;
+    const handleGesture = () => {
+      const unlocked = this.unlockAudio(true);
+      if (unlocked && !this.autoplayBlocked) {
+        window.removeEventListener("pointerdown", handleGesture, true);
+        window.removeEventListener("touchstart", handleGesture, true);
+        window.removeEventListener("click", handleGesture, true);
+        window.removeEventListener("keydown", handleGesture, true);
+      }
+    };
+    window.addEventListener("pointerdown", handleGesture, { capture: true, passive: true });
+    window.addEventListener("touchstart", handleGesture, { capture: true, passive: true });
+    window.addEventListener("click", handleGesture, { capture: true, passive: true });
+    window.addEventListener("keydown", handleGesture, { capture: true, passive: true });
   }
 
   _initBrowserTtsWorker() {
@@ -50,7 +132,7 @@ class TTSManager {
       return;
     }
     try {
-      this._ttsWorker = new Worker("js/hf-tts-worker.js?v=gh7", { type: "module" });
+      this._ttsWorker = new Worker("js/hf-tts-worker.js?v=gh8", { type: "module" });
       this.browserTtsLoading = true;
       this.browserTtsError = "";
       this._ttsWorker.onmessage = (event) => {
@@ -132,6 +214,30 @@ class TTSManager {
       this._wavCache.delete(oldestKey);
     }
     this._wavCache.set(key, wavBuffer.slice(0));
+  }
+
+  async _createAudioFromWavBuffer(wavBuffer, item, estDuration, playbackRate = 1.0) {
+    const ctx = this._getAudioContext();
+    if (ctx && wavBuffer && wavBuffer.byteLength > 44 && typeof ctx.decodeAudioData === "function") {
+      try {
+        const audioBuffer = await ctx.decodeAudioData(wavBuffer.slice(0));
+        const rawDur = (audioBuffer && isFinite(audioBuffer.duration) && audioBuffer.duration > 0.05)
+          ? audioBuffer.duration
+          : estDuration;
+        const realDur = playbackRate > 0 ? rawDur / playbackRate : rawDur;
+        return {
+          kind: "webaudio",
+          audioBuffer,
+          wavBuffer,
+          playbackRate,
+          durationSec: realDur,
+        };
+      } catch (_) {
+        // decodeAudioData 失敗時は HTMLAudioElement へフォールバック
+      }
+    }
+    const blob = new Blob([wavBuffer], { type: "audio/wav" });
+    return await this._createAudioFromBlob(blob, item, estDuration, playbackRate);
   }
 
   async _createAudioFromBlob(blob, item, estDuration, playbackRate = 1.0) {
@@ -298,6 +404,9 @@ class TTSManager {
 
   setEnabled(enabled) {
     this.enabled = Boolean(enabled);
+    if (this.enabled) {
+      this.unlockAudio(false);
+    }
     try {
       if (typeof localStorage !== "undefined") {
         localStorage.setItem(TTS_STORAGE_KEY, String(this.enabled));
@@ -310,6 +419,12 @@ class TTSManager {
   }
 
   toggle() {
+    // 自動再生がブロックされている状態（および直前600ms以内のポインター解放直後）のクリックはミュートせずONを維持
+    if (this.enabled && (this.autoplayBlocked || (Date.now() - this._unblockedAtMs) < 600)) {
+      this.unlockAudio(true);
+      if (this.onStateChange) this.onStateChange(this.enabled, this.localAvailable);
+      return this.enabled;
+    }
     this.setEnabled(!this.enabled);
     return this.enabled;
   }
@@ -337,8 +452,17 @@ class TTSManager {
     const active = this._activeItem;
     this._activeItem = null;
     this._playing = false;
+    this._blockedReplay = null;
     this._clearAllTimers();
 
+    if (this._currentSource) {
+      try {
+        this._currentSource.onended = null;
+        this._currentSource.stop();
+        this._currentSource.disconnect();
+      } catch (_) {}
+      this._currentSource = null;
+    }
     if (this._currentAudio) {
       try {
         this._currentAudio.onended = null;
@@ -456,22 +580,20 @@ class TTSManager {
       const cacheKey = `${characterName}::${cleanText}`;
       const cached = this._wavCache.get(cacheKey);
       if (cached) {
-        const blob = new Blob([cached], { type: "audio/wav" });
-        return await this._createAudioFromBlob(blob, item, estDuration, playbackRate);
+        return await this._createAudioFromWavBuffer(cached, item, estDuration, playbackRate);
       }
 
       if (this.browserTtsReady || (this.browserTtsLoading && !this.browserTtsError)) {
         try {
-          const timeoutMs = this.browserTtsReady ? 20000 : 65000;
+          const timeoutMs = this.browserTtsReady ? 18000 : 65000;
           const res = await this._synthesizeInBrowserWorker(cleanText, characterName, timeoutMs);
           if (item.cancelled || !this.enabled) {
             return { kind: "cancelled", durationSec: 0 };
           }
           if (res?.wavBuffer && res.wavBuffer.byteLength > 44) {
             this._cacheWav(cacheKey, res.wavBuffer);
-            const blob = new Blob([res.wavBuffer], { type: "audio/wav" });
             const dur = res.durationSec > 0.1 ? res.durationSec : estDuration;
-            return await this._createAudioFromBlob(blob, item, dur, playbackRate);
+            return await this._createAudioFromWavBuffer(res.wavBuffer, item, dur, playbackRate);
           }
         } catch (err) {
           console.warn("[TTS] Browser neural TTS fallback to Web Speech:", err?.message || err);
@@ -514,7 +636,8 @@ class TTSManager {
         return { kind: "cancelled", durationSec: 0 };
       }
 
-      return await this._createAudioFromBlob(blob, item, estDuration, 1.0);
+      const wavBuf = await blob.arrayBuffer();
+      return await this._createAudioFromWavBuffer(wavBuf, item, estDuration, 1.0);
     } catch (_) {
       if (timer) clearTimeout(timer);
       this._failCount++;
@@ -540,6 +663,12 @@ class TTSManager {
       }
       this._processNext();
     });
+  }
+
+  _markAutoplayBlocked(item) {
+    this.autoplayBlocked = true;
+    this._blockedReplay = { text: item.text, characterName: item.characterName };
+    if (this.onStateChange) this.onStateChange(this.enabled, this.localAvailable);
   }
 
   async _playItem(item) {
@@ -572,6 +701,62 @@ class TTSManager {
       try { item.onEnd?.({ mode }); } catch (_) {}
     };
 
+    if (prepared.kind === "webaudio") {
+      const ctx = this._getAudioContext();
+      if (ctx && ctx.state === "running") {
+        const { audioBuffer, playbackRate = 1.0, durationSec } = prepared;
+        await new Promise((resolve) => {
+          let finished = false;
+          const src = ctx.createBufferSource();
+          src.buffer = audioBuffer;
+          if (playbackRate && playbackRate !== 1.0) {
+            src.playbackRate.value = playbackRate;
+          }
+          const gainNode = typeof ctx.createGain === "function" ? ctx.createGain() : null;
+          if (gainNode) {
+            gainNode.gain.value = 1.0;
+            src.connect(gainNode);
+            gainNode.connect(ctx.destination);
+          } else {
+            src.connect(ctx.destination);
+          }
+          this._currentSource = src;
+
+          const done = (mode = "hf-audio") => {
+            if (finished) return;
+            finished = true;
+            this._clearTimer(safetyTimer);
+            if (this._currentSource === src) this._currentSource = null;
+            try { src.onended = null; src.disconnect(); } catch (_) {}
+            try { gainNode?.disconnect(); } catch (_) {}
+            fireEnd(mode);
+            resolve();
+          };
+
+          const safetyTimer = this._setTimer(
+            () => done("hf-audio-timeout"),
+            Math.max(4000, Math.round((durationSec + 3) * 1000))
+          );
+
+          src.onended = () => done("hf-audio");
+          try {
+            src.start(0);
+            this.autoplayBlocked = false;
+            fireStart("hf-audio", durationSec);
+          } catch (_) {
+            done("hf-audio-error");
+          }
+        });
+        return;
+      }
+
+      // AudioContext が未アンロックの場合は HTMLAudioElement でも再生を試行（成功なら鳴る、失敗ならUIでクリック促す）
+      if (prepared.wavBuffer) {
+        const blob = new Blob([prepared.wavBuffer], { type: "audio/wav" });
+        prepared = await this._createAudioFromBlob(blob, item, prepared.durationSec, prepared.playbackRate);
+      }
+    }
+
     if (prepared.kind === "audio") {
       const { audio, url, durationSec } = prepared;
       this._currentAudio = audio;
@@ -595,7 +780,13 @@ class TTSManager {
           Math.max(5000, Math.round((durationSec + 4) * 1000))
         );
 
-        audio.onplaying = () => fireStart("hf-audio", durationSec);
+        audio.onplaying = () => {
+          if (this.autoplayBlocked) {
+            this.autoplayBlocked = false;
+            if (this.onStateChange) this.onStateChange(this.enabled, this.localAvailable);
+          }
+          fireStart("hf-audio", durationSec);
+        };
         audio.onended = () => done("hf-audio");
         audio.onerror = () => done("hf-audio-error");
 
@@ -604,8 +795,9 @@ class TTSManager {
           playPromise
             .then(() => fireStart("hf-audio", durationSec))
             .catch(() => {
-              // ブラウザの自動再生ポリシーでブロックされた場合もチャットを表示し、読み上げ相当時間だけ待機
-              const fallbackMs = Math.max(1800, Math.min(4500, Math.round(durationSec * 800)));
+              // 自動再生ブロックをUIに明確に通知し、画面クリック即再生に備える
+              this._markAutoplayBlocked(item);
+              const fallbackMs = Math.max(1800, Math.min(4000, Math.round(durationSec * 800)));
               fireStart("autoplay-blocked", fallbackMs / 1000);
               this._clearTimer(safetyTimer);
               this._setTimer(() => done("autoplay-blocked"), fallbackMs);
