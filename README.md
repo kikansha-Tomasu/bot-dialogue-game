@@ -23,6 +23,8 @@ AIキャラクターが2Dマップ上を自由に動き回り、プレイヤー�
 
 ### 方法1：サーバー不要で遊ぶ（GitHub Pages）
 
+- **公開プレイURL**：[https://kikansha-Tomasu.github.io/bot-dialogue-game/](https://kikansha-Tomasu.github.io/bot-dialogue-game/)
+
 1. GitHub リポジトリの **Settings → Pages → Build and deployment → Source** を **GitHub Actions** に設定すると、`.github/workflows/pages.yml` が自動で静的サイトをデプロイします。
 2. 公開された GitHub Pages URL をブラウザ（Chrome / Edge 推奨・WebGPU 対応環境だと高速）で開くだけで、サーバー起動・環境構築・APIキー不要ですぐに遊べます。
    - 初回のみブラウザ内で Hugging Face AI モデルを読み込みます（画面左上に `⏳ HF AI読込 XX%` と表示され、読み込み中もそのまま遊べます）。
