@@ -1,0 +1,1102 @@
+{
+  "tileSize": 256,
+  "anchor": {
+    "x": 128,
+    "y": 224
+  },
+  "rendering": "Draw seamless background tile first, then crop overlays, then town development overlays, then object sprites.",
+  "baseTiles": [
+    {
+      "id": "farm_soil",
+      "file": "base_tiles/farm_soil.png",
+      "type": "gapless_base_tile",
+      "description": "Bare farm soil tile for crop growth overlays."
+    },
+    {
+      "id": "road_straight_level_1",
+      "file": "base_tiles/road_straight_level_1.png",
+      "type": "road_base_tile",
+      "stage": 1,
+      "targetBase": [
+        "road_straight"
+      ],
+      "description": "road_straight upgraded to compacted gravel road.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "road_straight_level_2",
+      "file": "base_tiles/road_straight_level_2.png",
+      "type": "road_base_tile",
+      "stage": 2,
+      "targetBase": [
+        "road_straight"
+      ],
+      "description": "road_straight upgraded to stone-paved road.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "road_straight_level_3",
+      "file": "base_tiles/road_straight_level_3.png",
+      "type": "road_base_tile",
+      "stage": 3,
+      "targetBase": [
+        "road_straight"
+      ],
+      "description": "road_straight upgraded to smooth paved road.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "road_straight_level_4",
+      "file": "base_tiles/road_straight_level_4.png",
+      "type": "road_base_tile",
+      "stage": 4,
+      "targetBase": [
+        "road_straight"
+      ],
+      "description": "road_straight upgraded to sensor-lit advanced road.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "road_straight_level_5",
+      "file": "base_tiles/road_straight_level_5.png",
+      "type": "road_base_tile",
+      "stage": 5,
+      "targetBase": [
+        "road_straight"
+      ],
+      "description": "road_straight upgraded to future mobility road.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "road_corner_level_1",
+      "file": "base_tiles/road_corner_level_1.png",
+      "type": "road_base_tile",
+      "stage": 1,
+      "targetBase": [
+        "road_corner"
+      ],
+      "description": "road_corner upgraded to compacted gravel road.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "road_corner_level_2",
+      "file": "base_tiles/road_corner_level_2.png",
+      "type": "road_base_tile",
+      "stage": 2,
+      "targetBase": [
+        "road_corner"
+      ],
+      "description": "road_corner upgraded to stone-paved road.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "road_corner_level_3",
+      "file": "base_tiles/road_corner_level_3.png",
+      "type": "road_base_tile",
+      "stage": 3,
+      "targetBase": [
+        "road_corner"
+      ],
+      "description": "road_corner upgraded to smooth paved road.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "road_corner_level_4",
+      "file": "base_tiles/road_corner_level_4.png",
+      "type": "road_base_tile",
+      "stage": 4,
+      "targetBase": [
+        "road_corner"
+      ],
+      "description": "road_corner upgraded to sensor-lit advanced road.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "road_corner_level_5",
+      "file": "base_tiles/road_corner_level_5.png",
+      "type": "road_base_tile",
+      "stage": 5,
+      "targetBase": [
+        "road_corner"
+      ],
+      "description": "road_corner upgraded to future mobility road.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "road_t_level_1",
+      "file": "base_tiles/road_t_level_1.png",
+      "type": "road_base_tile",
+      "stage": 1,
+      "targetBase": [
+        "road_t"
+      ],
+      "description": "road_t upgraded to compacted gravel road.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "road_t_level_2",
+      "file": "base_tiles/road_t_level_2.png",
+      "type": "road_base_tile",
+      "stage": 2,
+      "targetBase": [
+        "road_t"
+      ],
+      "description": "road_t upgraded to stone-paved road.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "road_t_level_3",
+      "file": "base_tiles/road_t_level_3.png",
+      "type": "road_base_tile",
+      "stage": 3,
+      "targetBase": [
+        "road_t"
+      ],
+      "description": "road_t upgraded to smooth paved road.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "road_t_level_4",
+      "file": "base_tiles/road_t_level_4.png",
+      "type": "road_base_tile",
+      "stage": 4,
+      "targetBase": [
+        "road_t"
+      ],
+      "description": "road_t upgraded to sensor-lit advanced road.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "road_t_level_5",
+      "file": "base_tiles/road_t_level_5.png",
+      "type": "road_base_tile",
+      "stage": 5,
+      "targetBase": [
+        "road_t"
+      ],
+      "description": "road_t upgraded to future mobility road.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "road_cross_level_1",
+      "file": "base_tiles/road_cross_level_1.png",
+      "type": "road_base_tile",
+      "stage": 1,
+      "targetBase": [
+        "road_cross"
+      ],
+      "description": "road_cross upgraded to compacted gravel road.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "road_cross_level_2",
+      "file": "base_tiles/road_cross_level_2.png",
+      "type": "road_base_tile",
+      "stage": 2,
+      "targetBase": [
+        "road_cross"
+      ],
+      "description": "road_cross upgraded to stone-paved road.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "road_cross_level_3",
+      "file": "base_tiles/road_cross_level_3.png",
+      "type": "road_base_tile",
+      "stage": 3,
+      "targetBase": [
+        "road_cross"
+      ],
+      "description": "road_cross upgraded to smooth paved road.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "road_cross_level_4",
+      "file": "base_tiles/road_cross_level_4.png",
+      "type": "road_base_tile",
+      "stage": 4,
+      "targetBase": [
+        "road_cross"
+      ],
+      "description": "road_cross upgraded to sensor-lit advanced road.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "road_cross_level_5",
+      "file": "base_tiles/road_cross_level_5.png",
+      "type": "road_base_tile",
+      "stage": 5,
+      "targetBase": [
+        "road_cross"
+      ],
+      "description": "road_cross upgraded to future mobility road.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "dirt_path_level_1",
+      "file": "base_tiles/dirt_path_level_1.png",
+      "type": "road_base_tile",
+      "stage": 1,
+      "targetBase": [
+        "dirt_path"
+      ],
+      "description": "dirt_path upgraded to compacted gravel road.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "dirt_path_level_2",
+      "file": "base_tiles/dirt_path_level_2.png",
+      "type": "road_base_tile",
+      "stage": 2,
+      "targetBase": [
+        "dirt_path"
+      ],
+      "description": "dirt_path upgraded to stone-paved road.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "dirt_path_level_3",
+      "file": "base_tiles/dirt_path_level_3.png",
+      "type": "road_base_tile",
+      "stage": 3,
+      "targetBase": [
+        "dirt_path"
+      ],
+      "description": "dirt_path upgraded to smooth paved road.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "dirt_path_level_4",
+      "file": "base_tiles/dirt_path_level_4.png",
+      "type": "road_base_tile",
+      "stage": 4,
+      "targetBase": [
+        "dirt_path"
+      ],
+      "description": "dirt_path upgraded to sensor-lit advanced road.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "dirt_path_level_5",
+      "file": "base_tiles/dirt_path_level_5.png",
+      "type": "road_base_tile",
+      "stage": 5,
+      "targetBase": [
+        "dirt_path"
+      ],
+      "description": "dirt_path upgraded to future mobility road.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    }
+  ],
+  "assets": [
+    {
+      "id": "construction_foundation",
+      "file": "town/construction_foundation.png",
+      "type": "development_overlay",
+      "stage": 1,
+      "targetBase": [
+        "grass_field",
+        "wild_meadow",
+        "plaza_stone"
+      ],
+      "description": "Building foundation and survey stakes.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "construction_scaffold",
+      "file": "town/construction_scaffold.png",
+      "type": "development_overlay",
+      "stage": 2,
+      "targetBase": [
+        "house_red",
+        "house_blue",
+        "shop_food",
+        "shop_clothing",
+        "shop_interior",
+        "shop_pawn",
+        "restaurant",
+        "builder_shop",
+        "farm_coop",
+        "bank",
+        "town_hall",
+        "agent_hut"
+      ],
+      "description": "Scaffold overlay for buildings under upgrade.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "paved_border",
+      "file": "town/paved_border.png",
+      "type": "development_overlay",
+      "stage": 2,
+      "targetBase": [
+        "grass_field",
+        "wild_meadow",
+        "plaza_stone"
+      ],
+      "description": "Stone border showing upgraded public works.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "street_lamps",
+      "file": "town/street_lamps.png",
+      "type": "development_overlay",
+      "stage": 3,
+      "targetBase": [
+        "plaza_stone"
+      ],
+      "description": "Street lamps for developed plazas.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "flower_planters",
+      "file": "town/flower_planters.png",
+      "type": "development_overlay",
+      "stage": 2,
+      "targetBase": [
+        "plaza_stone",
+        "grass_field"
+      ],
+      "description": "Planters for beautification upgrades.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "market_stalls",
+      "file": "town/market_stalls.png",
+      "type": "development_overlay",
+      "stage": 3,
+      "targetBase": [
+        "plaza_stone"
+      ],
+      "description": "Pop-up market stalls for a lively town center.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "plaza_fountain",
+      "file": "town/plaza_fountain.png",
+      "type": "development_overlay",
+      "stage": 4,
+      "targetBase": [
+        "plaza_stone"
+      ],
+      "description": "Fountain centerpiece for a mature plaza.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "benches",
+      "file": "town/benches.png",
+      "type": "development_overlay",
+      "stage": 2,
+      "targetBase": [
+        "plaza_stone",
+        "grass_field",
+        "wild_meadow"
+      ],
+      "description": "Benches for parks and waiting areas.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "festival_lanterns",
+      "file": "town/festival_lanterns.png",
+      "type": "development_overlay",
+      "stage": 4,
+      "targetBase": [
+        "plaza_stone",
+        "grass_field"
+      ],
+      "description": "Festival lantern decoration layer.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "signposts",
+      "file": "town/signposts.png",
+      "type": "development_overlay",
+      "stage": 1,
+      "targetBase": [
+        "grass_field",
+        "wild_meadow"
+      ],
+      "description": "Wayfinding signs for early development.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "irrigation_channels",
+      "file": "town/irrigation_channels.png",
+      "type": "development_overlay",
+      "stage": 2,
+      "targetBase": [
+        "farm_plot",
+        "grass_field"
+      ],
+      "description": "Water channels for developed farmland.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "wooden_bridge",
+      "file": "town/wooden_bridge.png",
+      "type": "development_overlay",
+      "stage": 3,
+      "targetBase": [
+        "pond_edge"
+      ],
+      "description": "Small wooden bridge overlay.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "solar_panels",
+      "file": "town/solar_panels.png",
+      "type": "development_overlay",
+      "stage": 4,
+      "targetBase": [
+        "house_red",
+        "house_blue",
+        "bank",
+        "town_hall",
+        "agent_hut"
+      ],
+      "description": "Solar panel rooftop upgrade marker.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "clock_tower_upgrade",
+      "file": "town/clock_tower_upgrade.png",
+      "type": "development_overlay",
+      "stage": 5,
+      "targetBase": [
+        "town_hall",
+        "plaza_stone"
+      ],
+      "description": "Civic clock and lights for high development.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "carrot_stage_0",
+      "file": "crops/carrot_stage_0.png",
+      "type": "crop_overlay",
+      "crop": "carrot",
+      "cropName": "Carrot",
+      "stage": 0,
+      "targetBase": [
+        "farm_plot"
+      ],
+      "description": "Carrot growth stage 0.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "carrot_stage_1",
+      "file": "crops/carrot_stage_1.png",
+      "type": "crop_overlay",
+      "crop": "carrot",
+      "cropName": "Carrot",
+      "stage": 1,
+      "targetBase": [
+        "farm_plot"
+      ],
+      "description": "Carrot growth stage 1.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "carrot_stage_2",
+      "file": "crops/carrot_stage_2.png",
+      "type": "crop_overlay",
+      "crop": "carrot",
+      "cropName": "Carrot",
+      "stage": 2,
+      "targetBase": [
+        "farm_plot"
+      ],
+      "description": "Carrot growth stage 2.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "carrot_stage_3",
+      "file": "crops/carrot_stage_3.png",
+      "type": "crop_overlay",
+      "crop": "carrot",
+      "cropName": "Carrot",
+      "stage": 3,
+      "targetBase": [
+        "farm_plot"
+      ],
+      "description": "Carrot growth stage 3.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "tomato_stage_0",
+      "file": "crops/tomato_stage_0.png",
+      "type": "crop_overlay",
+      "crop": "tomato",
+      "cropName": "Tomato",
+      "stage": 0,
+      "targetBase": [
+        "farm_plot"
+      ],
+      "description": "Tomato growth stage 0.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "tomato_stage_1",
+      "file": "crops/tomato_stage_1.png",
+      "type": "crop_overlay",
+      "crop": "tomato",
+      "cropName": "Tomato",
+      "stage": 1,
+      "targetBase": [
+        "farm_plot"
+      ],
+      "description": "Tomato growth stage 1.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "tomato_stage_2",
+      "file": "crops/tomato_stage_2.png",
+      "type": "crop_overlay",
+      "crop": "tomato",
+      "cropName": "Tomato",
+      "stage": 2,
+      "targetBase": [
+        "farm_plot"
+      ],
+      "description": "Tomato growth stage 2.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "tomato_stage_3",
+      "file": "crops/tomato_stage_3.png",
+      "type": "crop_overlay",
+      "crop": "tomato",
+      "cropName": "Tomato",
+      "stage": 3,
+      "targetBase": [
+        "farm_plot"
+      ],
+      "description": "Tomato growth stage 3.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "wheat_stage_0",
+      "file": "crops/wheat_stage_0.png",
+      "type": "crop_overlay",
+      "crop": "wheat",
+      "cropName": "Wheat",
+      "stage": 0,
+      "targetBase": [
+        "farm_plot"
+      ],
+      "description": "Wheat growth stage 0.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "wheat_stage_1",
+      "file": "crops/wheat_stage_1.png",
+      "type": "crop_overlay",
+      "crop": "wheat",
+      "cropName": "Wheat",
+      "stage": 1,
+      "targetBase": [
+        "farm_plot"
+      ],
+      "description": "Wheat growth stage 1.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "wheat_stage_2",
+      "file": "crops/wheat_stage_2.png",
+      "type": "crop_overlay",
+      "crop": "wheat",
+      "cropName": "Wheat",
+      "stage": 2,
+      "targetBase": [
+        "farm_plot"
+      ],
+      "description": "Wheat growth stage 2.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "wheat_stage_3",
+      "file": "crops/wheat_stage_3.png",
+      "type": "crop_overlay",
+      "crop": "wheat",
+      "cropName": "Wheat",
+      "stage": 3,
+      "targetBase": [
+        "farm_plot"
+      ],
+      "description": "Wheat growth stage 3.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "cabbage_stage_0",
+      "file": "crops/cabbage_stage_0.png",
+      "type": "crop_overlay",
+      "crop": "cabbage",
+      "cropName": "Cabbage",
+      "stage": 0,
+      "targetBase": [
+        "farm_plot"
+      ],
+      "description": "Cabbage growth stage 0.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "cabbage_stage_1",
+      "file": "crops/cabbage_stage_1.png",
+      "type": "crop_overlay",
+      "crop": "cabbage",
+      "cropName": "Cabbage",
+      "stage": 1,
+      "targetBase": [
+        "farm_plot"
+      ],
+      "description": "Cabbage growth stage 1.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "cabbage_stage_2",
+      "file": "crops/cabbage_stage_2.png",
+      "type": "crop_overlay",
+      "crop": "cabbage",
+      "cropName": "Cabbage",
+      "stage": 2,
+      "targetBase": [
+        "farm_plot"
+      ],
+      "description": "Cabbage growth stage 2.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "cabbage_stage_3",
+      "file": "crops/cabbage_stage_3.png",
+      "type": "crop_overlay",
+      "crop": "cabbage",
+      "cropName": "Cabbage",
+      "stage": 3,
+      "targetBase": [
+        "farm_plot"
+      ],
+      "description": "Cabbage growth stage 3.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "corn_stage_0",
+      "file": "crops/corn_stage_0.png",
+      "type": "crop_overlay",
+      "crop": "corn",
+      "cropName": "Corn",
+      "stage": 0,
+      "targetBase": [
+        "farm_plot"
+      ],
+      "description": "Corn growth stage 0.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "corn_stage_1",
+      "file": "crops/corn_stage_1.png",
+      "type": "crop_overlay",
+      "crop": "corn",
+      "cropName": "Corn",
+      "stage": 1,
+      "targetBase": [
+        "farm_plot"
+      ],
+      "description": "Corn growth stage 1.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "corn_stage_2",
+      "file": "crops/corn_stage_2.png",
+      "type": "crop_overlay",
+      "crop": "corn",
+      "cropName": "Corn",
+      "stage": 2,
+      "targetBase": [
+        "farm_plot"
+      ],
+      "description": "Corn growth stage 2.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "corn_stage_3",
+      "file": "crops/corn_stage_3.png",
+      "type": "crop_overlay",
+      "crop": "corn",
+      "cropName": "Corn",
+      "stage": 3,
+      "targetBase": [
+        "farm_plot"
+      ],
+      "description": "Corn growth stage 3.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "pumpkin_stage_0",
+      "file": "crops/pumpkin_stage_0.png",
+      "type": "crop_overlay",
+      "crop": "pumpkin",
+      "cropName": "Pumpkin",
+      "stage": 0,
+      "targetBase": [
+        "farm_plot"
+      ],
+      "description": "Pumpkin growth stage 0.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "pumpkin_stage_1",
+      "file": "crops/pumpkin_stage_1.png",
+      "type": "crop_overlay",
+      "crop": "pumpkin",
+      "cropName": "Pumpkin",
+      "stage": 1,
+      "targetBase": [
+        "farm_plot"
+      ],
+      "description": "Pumpkin growth stage 1.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "pumpkin_stage_2",
+      "file": "crops/pumpkin_stage_2.png",
+      "type": "crop_overlay",
+      "crop": "pumpkin",
+      "cropName": "Pumpkin",
+      "stage": 2,
+      "targetBase": [
+        "farm_plot"
+      ],
+      "description": "Pumpkin growth stage 2.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "pumpkin_stage_3",
+      "file": "crops/pumpkin_stage_3.png",
+      "type": "crop_overlay",
+      "crop": "pumpkin",
+      "cropName": "Pumpkin",
+      "stage": 3,
+      "targetBase": [
+        "farm_plot"
+      ],
+      "description": "Pumpkin growth stage 3.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "strawberry_stage_0",
+      "file": "crops/strawberry_stage_0.png",
+      "type": "crop_overlay",
+      "crop": "strawberry",
+      "cropName": "Strawberry",
+      "stage": 0,
+      "targetBase": [
+        "farm_plot"
+      ],
+      "description": "Strawberry growth stage 0.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "strawberry_stage_1",
+      "file": "crops/strawberry_stage_1.png",
+      "type": "crop_overlay",
+      "crop": "strawberry",
+      "cropName": "Strawberry",
+      "stage": 1,
+      "targetBase": [
+        "farm_plot"
+      ],
+      "description": "Strawberry growth stage 1.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "strawberry_stage_2",
+      "file": "crops/strawberry_stage_2.png",
+      "type": "crop_overlay",
+      "crop": "strawberry",
+      "cropName": "Strawberry",
+      "stage": 2,
+      "targetBase": [
+        "farm_plot"
+      ],
+      "description": "Strawberry growth stage 2.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "strawberry_stage_3",
+      "file": "crops/strawberry_stage_3.png",
+      "type": "crop_overlay",
+      "crop": "strawberry",
+      "cropName": "Strawberry",
+      "stage": 3,
+      "targetBase": [
+        "farm_plot"
+      ],
+      "description": "Strawberry growth stage 3.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "rice_stage_0",
+      "file": "crops/rice_stage_0.png",
+      "type": "crop_overlay",
+      "crop": "rice",
+      "cropName": "Rice",
+      "stage": 0,
+      "targetBase": [
+        "farm_plot"
+      ],
+      "description": "Rice growth stage 0.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "rice_stage_1",
+      "file": "crops/rice_stage_1.png",
+      "type": "crop_overlay",
+      "crop": "rice",
+      "cropName": "Rice",
+      "stage": 1,
+      "targetBase": [
+        "farm_plot"
+      ],
+      "description": "Rice growth stage 1.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "rice_stage_2",
+      "file": "crops/rice_stage_2.png",
+      "type": "crop_overlay",
+      "crop": "rice",
+      "cropName": "Rice",
+      "stage": 2,
+      "targetBase": [
+        "farm_plot"
+      ],
+      "description": "Rice growth stage 2.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "rice_stage_3",
+      "file": "crops/rice_stage_3.png",
+      "type": "crop_overlay",
+      "crop": "rice",
+      "cropName": "Rice",
+      "stage": 3,
+      "targetBase": [
+        "farm_plot"
+      ],
+      "description": "Rice growth stage 3.",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    }
+  ]
+}

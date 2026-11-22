@@ -1,0 +1,11 @@
+flask
+flask-cors
+requests
+numpy>=2.0
+torch
+torchaudio
+transformers<5
+huggingface_hub[hf_xet]
+llama-cpp-python
+style-bert-vits2
+soundfile

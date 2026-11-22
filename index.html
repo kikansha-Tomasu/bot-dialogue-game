@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bot対話ゲーム</title>
+  <script src="colors.js"></script>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<div id="error-banner" role="alert" aria-live="assertive"></div>
+
+<div id="app">
+  <!-- ゲームキャンバス領域 -->
+  <div id="canvas-wrap">
+    <canvas id="game-canvas"></canvas>
+
+    <!-- 建築メニューパネル -->
+    <div id="build-panel" class="modal-panel hidden" role="dialog" aria-modal="true" aria-labelledby="build-title">
+      <div id="build-header" class="modal-header">
+        <span id="build-title">🔨 建築メニュー</span>
+        <button id="build-close" type="button" class="modal-close" aria-label="建築メニューを閉じる">✕</button>
+      </div>
+      <div id="build-list"></div>
+    </div>
+
+    <!-- 取引板パネル -->
+    <div id="orderbook-panel" class="modal-panel hidden" role="dialog" aria-modal="true" aria-labelledby="orderbook-title">
+      <div id="orderbook-header" class="modal-header">
+        <span id="orderbook-title">📋 取引板</span>
+        <button id="orderbook-close" type="button" class="modal-close" aria-label="取引板を閉じる">✕</button>
+      </div>
+
+      <!-- 資源タブ -->
+      <div id="resource-tabs" role="tablist" aria-label="資源カテゴリ">
+        <button type="button" class="resource-tab-btn active" data-resource="wood" role="tab" aria-selected="true">🪵 木材</button>
+        <button type="button" class="resource-tab-btn" data-resource="stone" role="tab" aria-selected="false">🪨 石</button>
+        <button type="button" class="resource-tab-btn" data-resource="herb" role="tab" aria-selected="false">🌿 薬草</button>
+        <button type="button" class="resource-tab-btn" data-resource="fish" role="tab" aria-selected="false">🐟 魚</button>
+      </div>
+
+      <!-- 価格チャート＆テクニカル指標 -->
+      <div id="price-chart-section">
+        <div id="price-chart-wrap">
+          <canvas id="price-chart"></canvas>
+          <div id="price-chart-empty" class="hidden">約定データなし</div>
+        </div>
+        <div id="indicator-controls" role="group" aria-label="テクニカル指標">
+          <span class="indicator-label">指標:</span>
+          <button type="button" class="ind-btn active" data-ind="ma5" aria-pressed="true">MA5</button>
+          <button type="button" class="ind-btn active" data-ind="ma10" aria-pressed="true">MA10</button>
+          <button type="button" class="ind-btn" data-ind="bb" aria-pressed="false">BB</button>
+          <button type="button" class="ind-btn" data-ind="rsi" aria-pressed="false">RSI</button>
+          <span id="rsi-value" aria-live="polite"></span>
+        </div>
+      </div>
+
+      <!-- 注文一覧 -->
+      <div id="orderbook-list"></div>
+      <div id="recent-trades-strip" class="hidden" aria-label="直近の約定履歴"></div>
+
+      <!-- 注文方法タブ -->
+      <div class="order-tabs" role="tablist" aria-label="注文方式">
+        <button type="button" class="tab-btn active" data-tab="limit" role="tab" aria-selected="true">📌 指値注文</button>
+        <button type="button" class="tab-btn" data-tab="market" role="tab" aria-selected="false">⚡ 成行注文</button>
+      </div>
+
+      <!-- 指値注文フォーム -->
+      <div id="tab-limit" class="tab-content">
+        <div class="post-form">
+          <div class="post-row">
+            <label for="post-sell-type">売る</label>
+            <select id="post-sell-type" aria-label="売る資源">
+              <option value="wood" selected>🪵 木材</option>
+              <option value="stone">🪨 石</option>
+              <option value="herb">🌿 薬草</option>
+              <option value="fish">🐟 魚</option>
+              <option value="coin">🪙 コイン</option>
+            </select>
+            <input id="post-sell-amount" type="number" min="1" max="99" value="1" aria-label="売る数量">
+          </div>
+          <div class="post-row">
+            <label for="post-buy-type">買う</label>
+            <select id="post-buy-type" aria-label="買う資源">
+              <option value="coin" selected>🪙 コイン</option>
+              <option value="wood">🪵 木材</option>
+              <option value="stone">🪨 石</option>
+              <option value="herb">🌿 薬草</option>
+              <option value="fish">🐟 魚</option>
+            </select>
+            <input id="post-buy-amount" type="number" min="1" max="99" value="2" aria-label="買う数量">
+          </div>
+        </div>
+        <p id="limit-unit-preview" class="trade-coin-hint">売り指値: 単価 🪙2.00/木材</p>
+        <button id="post-order-btn" type="button">板に注文を出す</button>
+      </div>
+
+      <!-- 成行注文フォーム -->
+      <div id="tab-market" class="tab-content hidden">
+        <div class="market-toggle" role="group" aria-label="成行売買切替">
+          <button type="button" class="market-side-btn active" data-side="buy" aria-pressed="true">買い成行</button>
+          <button type="button" class="market-side-btn" data-side="sell" aria-pressed="false">売り成行</button>
+        </div>
+
+        <!-- 買い成行 -->
+        <div id="market-buy-form">
+          <div class="post-form">
+            <div class="post-row">
+              <label for="market-buy-type">受取</label>
+              <select id="market-buy-type" aria-label="買う資源">
+                <option value="wood" selected>🪵 木材</option>
+                <option value="stone">🪨 石</option>
+                <option value="herb">🌿 薬草</option>
+                <option value="fish">🐟 魚</option>
+              </select>
+              <input id="market-buy-amount" type="number" min="1" max="99" value="1" aria-label="買う数量">
+            </div>
+          </div>
+          <div id="market-buy-rate" class="market-rate no-rate">最良レート: 売り注文なし</div>
+          <button id="market-buy-btn" type="button">成行で買う</button>
+        </div>
+
+        <!-- 売り成行 -->
+        <div id="market-sell-form" class="hidden">
+          <div class="post-form">
+            <div class="post-row">
+              <label for="market-sell-type">売る</label>
+              <select id="market-sell-type" aria-label="売る資源">
+                <option value="wood" selected>🪵 木材</option>
+                <option value="stone">🪨 石</option>
+                <option value="herb">🌿 薬草</option>
+                <option value="fish">🐟 魚</option>
+              </select>
+              <input id="market-sell-amount" type="number" min="1" max="99" value="1" aria-label="売る数量">
+            </div>
+          </div>
+          <div id="market-sell-rate" class="market-rate no-rate">最良レート: 買い注文なし</div>
+          <button id="market-sell-btn" type="button">成行で売る</button>
+        </div>
+      </div>
+
+      <div id="post-status" aria-live="polite"></div>
+    </div>
+
+    <!-- インベントリ＆総資産ランキングパネル -->
+    <div id="inventory-panel" class="modal-panel hidden" role="dialog" aria-modal="true" aria-labelledby="inventory-title">
+      <div id="inventory-header" class="modal-header">
+        <span id="inventory-title">🏆 ライバル総資産ランキング＆所持品</span>
+        <button id="inventory-close" type="button" class="modal-close" aria-label="インベントリを閉じる">✕</button>
+      </div>
+      <div id="inventory-content"></div>
+    </div>
+
+    <!-- 街の発展＆ショップパネル -->
+    <div id="progression-panel" class="modal-panel hidden" role="dialog" aria-modal="true" aria-labelledby="progression-title">
+      <div id="progression-header" class="modal-header">
+        <span id="progression-title">✨ 街の発展・農業＆ショップ</span>
+        <span id="player-title-badge" class="title-pill">🌱 見習い旅人</span>
+        <button id="progression-close" type="button" class="modal-close" aria-label="街の発展メニューを閉じる">✕</button>
+      </div>
+
+      <!-- 街の納品依頼（資源→コイン獲得） -->
+      <div id="quest-banner"></div>
+
+      <!-- タブ切替 -->
+      <div id="prog-tabs" role="tablist" aria-label="発展カテゴリ">
+        <button type="button" class="prog-tab-btn active" data-ptab="town" role="tab" aria-selected="true">🏙 街の発展</button>
+        <button type="button" class="prog-tab-btn" data-ptab="farming" role="tab" aria-selected="false">🌾 農業</button>
+        <button type="button" class="prog-tab-btn" data-ptab="cooking" role="tab" aria-selected="false">🍳 料理</button>
+        <button type="button" class="prog-tab-btn" data-ptab="upgrades" role="tab" aria-selected="false">⚡ 能力強化</button>
+        <button type="button" class="prog-tab-btn" data-ptab="avatars" role="tab" aria-selected="false">🐾 アバター</button>
+      </div>
+
+      <div id="progression-body"></div>
+      <div id="progression-status" aria-live="polite"></div>
+    </div>
+
+    <!-- シーズン優勝表彰モーダル -->
+    <div id="victory-panel" class="modal-panel hidden" role="dialog" aria-modal="true" aria-labelledby="victory-title">
+      <div id="victory-header" class="modal-header">
+        <span id="victory-title">🏆 シーズン優勝決定！</span>
+        <button id="victory-close" type="button" class="modal-close" aria-label="表彰画面を閉じる">✕</button>
+      </div>
+      <div id="victory-content"></div>
+      <div id="victory-actions">
+        <button id="btn-victory-continue" type="button" class="prog-primary-btn is-ready">▶ このままフリープレイを続ける</button>
+        <button id="btn-victory-reset" type="button" class="prog-action-btn">↺ 新シーズンを始める（初期化）</button>
+      </div>
+    </div>
+
+    <!-- 上部コンパクトHUD（接続状態・街レベル・音声切替・マップ切替・初期化） -->
+    <div id="top-hud">
+      <button id="status-pill" type="button" class="hud-pill status-checking" title="接続状態を再確認">⏳ 接続確認中...</button>
+      <button id="town-badge" type="button" class="hud-pill hud-town-btn" title="街の発展＆ショップを開く (U)">🏕️ 街Lv.0</button>
+      <button id="btn-tts-toggle" type="button" class="hud-pill hud-btn" aria-pressed="true" title="読み上げ音声をON/OFF">🔊 音声ON</button>
+      <select id="map-select" class="hud-pill hud-select" aria-label="マップ選択">
+        <option value="central_plaza">🗺 Central Plaza</option>
+      </select>
+      <button id="btn-reset-save" type="button" class="hud-pill hud-reset-btn" title="セーブデータを初期化して最初から始める">↺ 初期化</button>
+    </div>
+
+    <!-- 下部アクションボタン＆ヒント -->
+    <div id="game-overlay">
+      <div id="action-buttons">
+        <button id="btn-gather"      type="button" title="近くの資源を採集 (E)">⛏ 採集 <kbd>E</kbd></button>
+        <button id="btn-build"       type="button" title="建築メニューを開く (B)">🏗 建築 <kbd>B</kbd></button>
+        <button id="btn-progression" type="button" title="街の発展・依頼・ショップを開く (U)">✨ 街発展 <kbd>U</kbd></button>
+        <button id="btn-inventory"   type="button" title="インベントリを開く (I)">📦 所持品 <kbd>I</kbd></button>
+        <button id="btn-orderbook"   type="button" title="取引板を開く (T)">📋 取引板 <kbd>T</kbd></button>
+      </div>
+      <div id="controls-hint">
+        WASD: 移動 &nbsp;|&nbsp; Esc: 閉じる
+      </div>
+    </div>
+  </div>
+
+  <!-- チャットパネル -->
+  <aside id="chat-panel" aria-label="チャットパネル">
+    <div id="chat-header">
+      <h2>💬 チャット</h2>
+      <div class="hint">@名前 を選ぶか入力して AI に話しかけよう</div>
+    </div>
+
+    <div id="chat-history" role="log" aria-live="polite" aria-relevant="additions"></div>
+
+    <div id="chat-input-area">
+      <div id="proximity-hint" aria-label="会話相手クイック選択"></div>
+      <div id="input-row">
+        <input
+          id="chat-input"
+          type="text"
+          placeholder="@名前 メッセージ..."
+          aria-label="チャットメッセージ入力"
+          autocomplete="off"
+          spellcheck="false"
+          maxlength="200"
+        >
+        <button id="send-btn" type="button">送信</button>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<!-- スクリプト読み込み順序が重要 -->
+<script src="js/config.js?v=gh1"></script>
+<script src="js/resources.js?v=gh1"></script>
+<script src="js/inventory.js?v=gh1"></script>
+<script src="js/buildings.js?v=gh1"></script>
+<script src="js/trade.js?v=gh1"></script>
+<script src="js/pathfinding.js?v=gh1"></script>
+<script src="js/farming.js?v=gh1"></script>
+<script src="js/progression.js?v=gh1"></script>
+<script src="js/storage.js?v=gh1"></script>
+<script src="js/characters.js?v=gh1"></script>
+<script src="js/map.js?v=gh1"></script>
+<script src="js/chat.js?v=gh1"></script>
+<script src="js/api.js?v=gh1"></script>
+<script src="js/tts.js?v=gh1"></script>
+<script src="js/ai-brain.js?v=gh1"></script>
+<script src="js/game.js?v=gh1"></script>
+
+</body>
+</html>

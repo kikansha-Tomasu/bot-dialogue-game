@@ -1,0 +1,16 @@
+# 秘密情報・ローカル環境設定
+.env
+.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.cache/
+
+# OS / IDE / 静的ビルド一時出力
+.DS_Store
+Thumbs.db
+_site/

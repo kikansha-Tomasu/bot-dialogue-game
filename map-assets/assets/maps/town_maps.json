@@ -1,0 +1,164 @@
+{
+  "schema": "llm-agent-town-map-v1",
+  "tileSize": 128,
+  "sourceTileSize": 256,
+  "assetRoot": "../town_blocks",
+  "maps": [
+    {
+      "id": "central_plaza",
+      "name": "Central Plaza",
+      "description": "A compact town center with shops around a crossroad plaza.",
+      "width": 12,
+      "height": 10,
+      "spawn": { "x": 5, "y": 5 },
+      "terrain": [
+        "GGGGFFFFGGGG",
+        "GGRRRRRRRRGG",
+        "GGRSSSSSSRGG",
+        "GGRGGPGGGRGG",
+        "GGRGGPGGGRGG",
+        "RRRPPXPPPRRR",
+        "GGRGGPGGGRGG",
+        "GGRGGPGGGRGG",
+        "GGRSSSSSSRGG",
+        "GGGGRRRRGGGG"
+      ],
+      "legend": {
+        "G": "grass_field",
+        "F": "wild_meadow",
+        "R": "road_straight",
+        "S": "plaza_stone",
+        "P": "plaza_stone",
+        "X": "road_cross"
+      },
+      "objects": [
+        { "asset": "town_hall", "x": 5, "y": 2 },
+        { "asset": "bank", "x": 8, "y": 2 },
+        { "asset": "restaurant", "x": 3, "y": 2 },
+        { "asset": "shop_food", "x": 3, "y": 8 },
+        { "asset": "shop_clothing", "x": 8, "y": 7 },
+        { "asset": "agent_hut", "x": 5, "y": 7 },
+        { "asset": "forest_edge", "x": 0, "y": 0 },
+        { "asset": "forest_edge", "x": 10, "y": 0 },
+        { "asset": "dense_forest", "x": 0, "y": 8 },
+        { "asset": "dense_forest", "x": 10, "y": 8 }
+      ]
+    },
+    {
+      "id": "shopping_street",
+      "name": "Shopping Street",
+      "description": "A busier main street where agents can compare shops and run errands.",
+      "width": 14,
+      "height": 9,
+      "spawn": { "x": 6, "y": 4 },
+      "terrain": [
+        "GGGGGGGGGGGGGG",
+        "GSSSSSSSSSSSSG",
+        "GRRRRRRXRRRRRG",
+        "GRGGGGGPGGGGRG",
+        "GRGGGGGPGGGGRG",
+        "GRRRRRRTRRRRRG",
+        "GSSSSSSSSSSSSG",
+        "GGGGGGGGGGGGGG",
+        "FFFFFFFFFFFFFF"
+      ],
+      "legend": {
+        "G": "grass_field",
+        "F": "wild_meadow",
+        "R": "road_straight",
+        "S": "plaza_stone",
+        "P": "dirt_path",
+        "X": "road_cross",
+        "T": "road_t"
+      },
+      "objects": [
+        { "asset": "shop_food", "x": 1, "y": 1 },
+        { "asset": "shop_clothing", "x": 3, "y": 1 },
+        { "asset": "shop_interior", "x": 5, "y": 1 },
+        { "asset": "shop_pawn", "x": 7, "y": 1 },
+        { "asset": "restaurant", "x": 9, "y": 1 },
+        { "asset": "bank", "x": 11, "y": 1 },
+        { "asset": "builder_shop", "x": 2, "y": 6 },
+        { "asset": "farm_coop", "x": 5, "y": 6 },
+        { "asset": "house_red", "x": 9, "y": 6 },
+        { "asset": "house_blue", "x": 11, "y": 6 },
+        { "asset": "forest_edge", "x": 0, "y": 7 },
+        { "asset": "forest_edge", "x": 12, "y": 7 }
+      ]
+    },
+    {
+      "id": "forest_hamlet",
+      "name": "Forest Hamlet",
+      "description": "A quiet residential edge map with forest boundaries and a pond.",
+      "width": 12,
+      "height": 10,
+      "spawn": { "x": 4, "y": 5 },
+      "terrain": [
+        "DDDDDDDDDDDD",
+        "DFFFFGGFFFFD",
+        "DFGGGGGGGGFD",
+        "DFGPPPPPPGFD",
+        "DFGPGGGGPGFD",
+        "DFGPGWWGPGFD",
+        "DFGPPPPPPGFD",
+        "DFGGGGGGGGFD",
+        "DFFFFGGFFFFD",
+        "DDDDDDDDDDDD"
+      ],
+      "legend": {
+        "D": "dense_forest",
+        "F": "forest_edge",
+        "G": "grass_field",
+        "P": "dirt_path",
+        "W": "pond_edge"
+      },
+      "objects": [
+        { "asset": "house_red", "x": 3, "y": 2 },
+        { "asset": "house_blue", "x": 7, "y": 2 },
+        { "asset": "agent_hut", "x": 5, "y": 7 },
+        { "asset": "forest_edge", "x": 1, "y": 1 },
+        { "asset": "forest_edge", "x": 9, "y": 1 },
+        { "asset": "dense_forest", "x": 1, "y": 8 },
+        { "asset": "dense_forest", "x": 9, "y": 8 },
+        { "asset": "pond_edge", "x": 5, "y": 5 }
+      ]
+    },
+    {
+      "id": "farm_riverside",
+      "name": "Farm Riverside",
+      "description": "A rural production map with fields, farm supply, and soft natural edges.",
+      "width": 13,
+      "height": 10,
+      "spawn": { "x": 6, "y": 5 },
+      "terrain": [
+        "GGGGGGWWGGGGG",
+        "GMMMMGWWGFFFF",
+        "GMMMMGWWGGGGG",
+        "GMMMMRRRRRRGG",
+        "GGGGRGGGGGRGG",
+        "FFFFRGGGGRFFF",
+        "GGGGRRRRRRGGG",
+        "GMMMMGWWGMMMM",
+        "GMMMMGWWGMMMM",
+        "GGGGGGWWGGGGG"
+      ],
+      "legend": {
+        "G": "grass_field",
+        "F": "wild_meadow",
+        "M": "farm_plot",
+        "R": "road_straight",
+        "W": "pond_edge"
+      },
+      "objects": [
+        { "asset": "farm_coop", "x": 5, "y": 4 },
+        { "asset": "builder_shop", "x": 9, "y": 2 },
+        { "asset": "house_red", "x": 3, "y": 6 },
+        { "asset": "agent_hut", "x": 8, "y": 5 },
+        { "asset": "forest_edge", "x": 0, "y": 1 },
+        { "asset": "forest_edge", "x": 11, "y": 1 },
+        { "asset": "dense_forest", "x": 0, "y": 8 },
+        { "asset": "dense_forest", "x": 11, "y": 9 }
+      ]
+    }
+  ]
+}

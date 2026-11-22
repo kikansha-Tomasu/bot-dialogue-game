@@ -1,0 +1,1505 @@
+/* すべての色は colors.js で定義された CSS カスタムプロパティを使用 */
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: var(--c-headerBg);
+  font-family: 'Georgia', 'Hiragino Mincho ProN', 'Yu Mincho', 'Meiryo', serif;
+  overflow: hidden;
+  color: var(--c-panelBg);
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2.5px solid var(--c-inputFocus);
+  outline-offset: 2px;
+}
+
+#app { display: flex; width: 100vw; height: 100vh; position: relative; }
+
+#canvas-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+#game-canvas { display: block; width: 100%; height: 100%; cursor: default; }
+
+/* ─── Top HUD Bar ─── */
+#top-hud {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  z-index: 20;
+}
+
+.hud-pill {
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 215, 0, 0.35);
+  background: rgba(44, 24, 16, 0.78);
+  color: #FDF8F0;
+  font-size: 11.5px;
+  font-weight: 600;
+  font-family: 'Segoe UI', 'Meiryo', sans-serif;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  backdrop-filter: blur(2px);
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.hud-pill:hover {
+  background: rgba(44, 24, 16, 0.92);
+  border-color: rgba(255, 215, 0, 0.7);
+}
+
+.hud-pill.status-online  { border-color: rgba(122, 184, 90, 0.85); }
+.hud-pill.status-offline { border-color: rgba(245, 190, 65, 0.85); }
+.hud-pill.is-muted       { opacity: 0.8; color: #D8C8A8; }
+
+.hud-select {
+  padding-right: 8px;
+}
+
+.hud-select option {
+  background: #2C1810;
+  color: #FDF8F0;
+}
+
+/* ─── Game Canvas Bottom Overlay ─── */
+#game-overlay {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  pointer-events: none;
+  box-sizing: border-box;
+  z-index: 20;
+}
+
+#action-buttons {
+  display: flex;
+  gap: 6px;
+  pointer-events: all;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+#action-buttons button {
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  font-family: 'Segoe UI', 'Meiryo', sans-serif;
+  color: var(--c-sendBtnText);
+  background: linear-gradient(to bottom, #5A7A36 0%, #3D5C20 100%);
+  border: none;
+  border-bottom: 3px solid #243810;
+  border-radius: 6px;
+  cursor: pointer;
+  box-shadow: 0 3px 6px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  transition: filter 0.12s, transform 0.1s, box-shadow 0.15s;
+  user-select: none;
+}
+
+#action-buttons button:hover { filter: brightness(1.15); }
+
+#action-buttons button:active {
+  transform: translateY(2px);
+  border-bottom-width: 1px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+
+#action-buttons button.can-gather,
+#action-buttons button.has-ready-action {
+  background: linear-gradient(to bottom, #8A6F1C 0%, #5F4A0E 100%);
+  border-bottom-color: #362905;
+  box-shadow: 0 0 10px rgba(255, 215, 0, 0.65), 0 3px 6px rgba(0, 0, 0, 0.45);
+}
+
+#action-buttons button kbd {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 0 4px;
+  font-size: 10px;
+  font-family: 'Segoe UI', monospace;
+  background: rgba(0, 0, 0, 0.28);
+  border-radius: 3px;
+  line-height: 1.5;
+  vertical-align: middle;
+}
+
+#controls-hint {
+  font-size: 11px;
+  font-family: 'Segoe UI', 'Meiryo', sans-serif;
+  color: #F5F0E0;
+  background: rgba(30, 20, 10, 0.62);
+  padding: 4px 10px;
+  border-radius: 4px;
+  white-space: nowrap;
+  pointer-events: none;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(2px);
+}
+
+/* ─── Chat Panel ─── */
+#chat-panel {
+  width: 360px;
+  min-width: 320px;
+  display: flex;
+  flex-direction: column;
+  background: var(--c-panelBg);
+  border-left: 2px solid var(--c-inputBorder);
+}
+
+#chat-header {
+  padding: 13px 16px 11px;
+  background: var(--c-headerBg);
+  border-bottom: 2px solid var(--c-inputBorder);
+}
+
+#chat-header h2 {
+  font-size: 13.5px;
+  color: var(--c-headerText);
+  font-weight: 600;
+  letter-spacing: 1.5px;
+}
+
+#chat-header .hint {
+  font-size: 11px;
+  color: var(--c-headerHint);
+  margin-top: 4px;
+  font-family: 'Segoe UI', 'Meiryo', sans-serif;
+}
+
+/* ─── Shared Modal Panels (キャンバス中央に配置しチャット欄を隠さない) ─── */
+.modal-panel {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  background: var(--c-panelBg);
+  border: 2px solid var(--c-inputBorder);
+  border-radius: 10px;
+  max-width: calc(100% - 24px);
+  max-height: calc(100% - 100px);
+  z-index: 300;
+  font-family: 'Segoe UI', 'Meiryo', sans-serif;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.42);
+}
+
+.modal-panel.hidden { display: none !important; }
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  padding: 11px 16px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--c-msgText);
+  border-bottom: 1px solid var(--c-msgBorder);
+  background: var(--c-inputAreaBg);
+  border-radius: 8px 8px 0 0;
+  flex-shrink: 0;
+}
+
+.modal-close {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--c-msgText);
+  font-size: 16px;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.modal-close:hover { background: rgba(44, 24, 16, 0.1); }
+
+/* ─── Build Panel ─── */
+#build-panel { width: 380px; }
+
+#build-list {
+  padding: 10px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  overflow-y: auto;
+  max-height: 70vh;
+}
+
+.build-item {
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: 1.5px solid var(--c-msgBorder);
+  background: var(--c-inputBg);
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.build-item:hover:not([disabled]) {
+  background: var(--c-msgHover);
+  border-color: var(--c-inputFocus);
+}
+
+.build-item.build-disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.build-item-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 5px;
+}
+
+.build-item-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--c-msgText);
+}
+
+.build-owned-badge {
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 10px;
+  background: var(--c-inputAreaBg);
+  color: var(--c-msgText);
+}
+
+.build-item-cost {
+  font-size: 12px;
+  color: var(--c-timeText);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+}
+
+.cost-chip {
+  font-size: 11.5px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.cost-chip.cost-ok    { background: rgba(46, 125, 50, 0.14); color: var(--c-successText); }
+.cost-chip.cost-short { background: rgba(183, 28, 28, 0.12); color: var(--c-dangerText); }
+
+.build-item-effect {
+  font-size: 11.5px;
+  color: var(--c-successText);
+  margin-top: 4px;
+  font-weight: 600;
+}
+
+/* ─── Inventory & Leaderboard Panel ─── */
+#inventory-panel {
+  width: 410px;
+}
+
+#inventory-content {
+  padding: 10px 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+}
+
+.inv-char-card {
+  padding: 9px 11px;
+  border-radius: 6px;
+  border: 1px solid var(--c-msgBorder);
+  background: var(--c-inputBg);
+}
+
+.inv-char-card.inv-player-card {
+  background: var(--c-playerMsgBg);
+  border-color: var(--c-inputBorder);
+}
+
+.inv-card-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.inv-rank { font-size: 14px; }
+
+.inv-char-name {
+  font-weight: 700;
+  font-size: 13px;
+  text-shadow: 0 0 1px rgba(44, 24, 16, 0.2);
+}
+
+.inv-player-card .inv-char-name { color: #7A5600 !important; }
+
+.inv-building-tag {
+  font-size: 10.5px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: rgba(74, 92, 46, 0.14);
+  color: var(--c-headerBg);
+  font-weight: 600;
+}
+
+.inv-gap-badge {
+  font-size: 10.5px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: rgba(183, 28, 28, 0.1);
+  color: var(--c-dangerText);
+  font-weight: 700;
+}
+
+.inv-gap-badge.is-leader {
+  background: rgba(46, 125, 50, 0.15);
+  color: var(--c-successText);
+}
+
+.inv-networth {
+  margin-left: auto;
+  font-size: 11.5px;
+  color: var(--c-goldText);
+}
+
+.inv-card-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--c-msgText);
+}
+
+.inv-chip {
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: rgba(216, 200, 168, 0.45);
+  font-weight: 600;
+}
+
+.inv-char-empty { color: var(--c-timeText); font-style: italic; }
+
+/* ─── Chat History ─── */
+#chat-history {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 0;
+  background: var(--c-panelBg);
+}
+
+#chat-history::-webkit-scrollbar { width: 5px; }
+#chat-history::-webkit-scrollbar-track { background: var(--c-panelBg); }
+#chat-history::-webkit-scrollbar-thumb {
+  background: var(--c-scrollThumb);
+  border-radius: 3px;
+}
+
+.message {
+  padding: 7px 15px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  border-bottom: 1px solid var(--c-msgBorder);
+  transition: background 0.12s;
+  font-family: 'Segoe UI', 'Hiragino Sans', 'Meiryo', sans-serif;
+}
+
+.message:hover { background: var(--c-msgHover); }
+
+.message .msg-header {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 2px;
+}
+
+.message .sender-name { font-weight: 700; font-size: 11.5px; letter-spacing: 0.2px; }
+.message .arrow { color: var(--c-senderArrow); font-size: 10px; }
+.message .recipient-name { color: var(--c-recipientName); font-size: 11.5px; font-weight: 600; }
+.message .msg-time { margin-left: auto; color: var(--c-timeText); font-size: 10px; }
+.message .msg-text { color: var(--c-msgText); font-size: 12.5px; padding-left: 2px; word-break: break-word; }
+
+.message.player-message { background: var(--c-playerMsgBg); }
+.message.player-message:hover { background: var(--c-playerMsgHover); }
+.message.player-message .sender-name { color: #7A5600 !important; }
+.message.player-message .msg-text { color: var(--c-playerMsgText); }
+
+.message.system-message { background: rgba(216, 200, 168, 0.28); }
+.message.typing-indicator .msg-text { color: var(--c-typingText); font-style: italic; }
+
+/* Typing animation */
+.typing-dots { display: inline-flex; gap: 3px; align-items: center; }
+
+.typing-dots span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--c-typingDot);
+  animation: typingBounce 1.4s infinite ease-in-out;
+}
+
+.typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+.typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes typingBounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.35; }
+  30% { transform: translateY(-5px); opacity: 1; }
+}
+
+/* ─── Chat Input Area ─── */
+#chat-input-area {
+  padding: 9px 12px 11px;
+  background: var(--c-inputAreaBg);
+  border-top: 2px solid var(--c-inputBorder);
+}
+
+#proximity-hint {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--c-hintText);
+  margin-bottom: 8px;
+  min-height: 22px;
+  font-family: 'Segoe UI', 'Meiryo', sans-serif;
+}
+
+.mention-prefix {
+  font-weight: 600;
+  color: var(--c-timeText);
+  margin-right: 2px;
+}
+
+.mention-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  border: 1.5px solid var(--chip-color, var(--c-inputBorder));
+  background: var(--c-inputBg);
+  color: var(--c-msgText);
+  font-size: 11px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  transition: transform 0.1s, background 0.12s;
+}
+
+.mention-chip:hover {
+  background: var(--c-msgHover);
+  transform: translateY(-1px);
+}
+
+.mention-chip.is-nearby {
+  background: #FFF6D6;
+  box-shadow: 0 0 0 1px var(--chip-color, #C48A00);
+}
+
+.near-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--c-statusOnline);
+  display: inline-block;
+}
+
+#input-row { display: flex; gap: 6px; }
+
+#chat-input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  background: var(--c-inputBg);
+  border: 2px solid var(--c-inputBorder);
+  border-radius: 5px;
+  color: var(--c-inputText);
+  font-size: 12.5px;
+  font-family: 'Segoe UI', 'Meiryo', sans-serif;
+  transition: border-color 0.15s;
+}
+
+#chat-input:focus { border-color: var(--c-inputFocus); }
+#chat-input::placeholder { color: var(--c-placeholder); }
+
+#send-btn {
+  padding: 8px 14px;
+  background: var(--c-sendBtnBg);
+  border: none;
+  border-radius: 5px;
+  color: var(--c-sendBtnText);
+  font-size: 12.5px;
+  font-weight: 700;
+  font-family: 'Segoe UI', 'Meiryo', sans-serif;
+  cursor: pointer;
+  transition: background 0.15s;
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+}
+
+#send-btn:hover { background: var(--c-sendBtnHover); }
+
+/* ─── Order Book Panel ─── */
+#orderbook-panel {
+  width: 490px;
+}
+
+/* ─── Resource Filter Tabs ─── */
+#resource-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 6px 8px 0;
+  border-bottom: 1px solid var(--c-msgBorder);
+  flex-shrink: 0;
+}
+
+.resource-tab-btn {
+  flex: 1;
+  padding: 6px 2px;
+  background: none;
+  border: none;
+  border-bottom: 2.5px solid transparent;
+  color: var(--c-timeText);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+  font-family: 'Segoe UI', 'Meiryo', sans-serif;
+}
+
+.resource-tab-btn.active {
+  color: var(--c-msgText);
+  border-bottom-color: var(--c-inputFocus);
+}
+
+.resource-tab-btn:hover:not(.active) { color: var(--c-msgText); }
+
+/* ─── Price Chart & Technical Indicators (非重なりレイアウト) ─── */
+#price-chart-section {
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--c-msgBorder);
+  background: #F4EDE0;
+}
+
+#price-chart-wrap {
+  position: relative;
+  height: 96px;
+  width: 100%;
+}
+
+#price-chart { display: block; width: 100%; height: 100%; }
+
+#price-chart-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--c-timeText);
+  font-size: 12px;
+  font-style: italic;
+  pointer-events: none;
+}
+
+#price-chart-empty.hidden { display: none; }
+
+#indicator-controls {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px 6px;
+  border-top: 1px solid rgba(122, 92, 56, 0.18);
+  background: var(--c-inputAreaBg);
+  flex-wrap: wrap;
+}
+
+.indicator-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--c-msgText);
+}
+
+.ind-btn {
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border: 1px solid var(--c-inputBorder);
+  background: var(--c-panelBg);
+  color: var(--c-timeText);
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.15s, color 0.15s;
+}
+
+.ind-btn.active {
+  background: var(--c-sendBtnBg);
+  color: var(--c-sendBtnText);
+  border-color: var(--c-sendBtnBg);
+}
+
+#rsi-value {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--c-msgText);
+}
+
+#rsi-value.rsi-high { color: var(--c-dangerText); }
+#rsi-value.rsi-low  { color: var(--c-successText); }
+#rsi-value.rsi-insufficient { color: var(--c-timeText); font-weight: 400; }
+
+/* ─── Order Book List ─── */
+#orderbook-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 8px;
+  min-height: 92px;
+  max-height: 220px;
+}
+
+.order-empty {
+  color: var(--c-timeText);
+  font-size: 12px;
+  text-align: center;
+  padding: 16px 0;
+  font-style: italic;
+}
+
+.order-header {
+  display: grid;
+  grid-template-columns: 0.8fr 2.1fr 0.8fr 74px;
+  padding: 3px 10px 5px;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--c-timeText);
+  border-bottom: 1px solid var(--c-msgBorder);
+  margin-bottom: 4px;
+  align-items: center;
+}
+
+.order-header span:last-child { text-align: center; }
+
+.order-item {
+  display: grid;
+  grid-template-columns: 0.8fr 2.1fr 0.8fr 74px;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  border-radius: 5px;
+  margin-bottom: 3px;
+  font-size: 13px;
+}
+
+.order-item.buy-order  { background: rgba(46, 125, 50, 0.09); }
+.order-item.sell-order { background: rgba(198, 40, 40, 0.08); }
+.order-item.own-order  { background: var(--c-playerMsgBg); }
+
+.col-sell-qty {
+  text-align: right;
+  color: #B71C1C;
+  font-size: 13px;
+}
+
+.col-price {
+  text-align: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--c-goldText);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.col-poster {
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.65);
+}
+
+.col-buy-qty {
+  text-align: left;
+  color: #245C1A;
+  font-size: 13px;
+}
+
+.col-empty {
+  opacity: 0.3;
+  font-size: 11px;
+}
+
+.order-btn {
+  padding: 4px 8px;
+  border: none;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.execute-btn {
+  background: var(--c-sendBtnBg);
+  color: var(--c-sendBtnText);
+}
+
+.execute-btn:hover:not([disabled]) { background: var(--c-sendBtnHover); }
+
+.execute-btn[disabled] {
+  background: #B8B0A0;
+  color: #4E453B;
+  cursor: not-allowed;
+}
+
+.cancel-btn {
+  background: var(--c-errorBg);
+  color: #fff;
+}
+
+/* ─── Order Tabs ─── */
+.order-tabs {
+  display: flex;
+  border-top: 1px solid var(--c-msgBorder);
+  flex-shrink: 0;
+}
+
+.tab-btn {
+  flex: 1;
+  padding: 8px 4px;
+  background: none;
+  border: none;
+  border-bottom: 2.5px solid transparent;
+  color: var(--c-timeText);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.tab-btn.active {
+  color: var(--c-msgText);
+  border-bottom-color: var(--c-inputFocus);
+}
+
+/* ─── Tab Content ─── */
+.tab-content {
+  padding: 10px 14px 4px;
+  flex-shrink: 0;
+}
+
+.tab-content.hidden { display: none; }
+
+.trade-coin-hint {
+  font-size: 11px;
+  color: var(--c-goldText);
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+/* ─── Post / Market Form ─── */
+.post-form { display: flex; flex-direction: column; gap: 6px; margin-bottom: 7px; }
+
+.post-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--c-msgText);
+}
+
+.post-row label { width: 32px; font-weight: 700; }
+
+.post-row select {
+  flex: 1;
+  padding: 5px 7px;
+  background: var(--c-inputBg);
+  border: 1.5px solid var(--c-inputBorder);
+  border-radius: 4px;
+  color: var(--c-inputText);
+  font-size: 12px;
+}
+
+.post-row input[type="number"] {
+  width: 60px;
+  padding: 5px 6px;
+  background: var(--c-inputBg);
+  border: 1.5px solid var(--c-inputBorder);
+  border-radius: 4px;
+  color: var(--c-inputText);
+  font-size: 12px;
+  text-align: center;
+}
+
+#post-order-btn, #market-buy-btn, #market-sell-btn {
+  width: 100%;
+  padding: 8px;
+  background: var(--c-sendBtnBg);
+  border: none;
+  border-radius: 5px;
+  color: var(--c-sendBtnText);
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s;
+  margin-bottom: 2px;
+}
+
+#post-order-btn:hover, #market-buy-btn:hover, #market-sell-btn:hover {
+  background: var(--c-sendBtnHover);
+}
+
+/* ─── Market Order ─── */
+.market-toggle {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.market-side-btn {
+  flex: 1;
+  padding: 6px;
+  border: 1.5px solid var(--c-inputBorder);
+  border-radius: 4px;
+  background: var(--c-inputBg);
+  color: var(--c-msgText);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.market-side-btn.active {
+  background: var(--c-sendBtnBg);
+  color: var(--c-sendBtnText);
+  border-color: var(--c-sendBtnBg);
+}
+
+#market-sell-form.hidden, #market-buy-form.hidden { display: none; }
+
+.market-rate {
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 6px 9px;
+  border-radius: 4px;
+  margin-bottom: 7px;
+}
+
+.market-rate.has-rate {
+  background: rgba(46, 125, 50, 0.14);
+  color: var(--c-successText);
+}
+
+.market-rate.no-rate {
+  background: rgba(128, 128, 128, 0.12);
+  color: var(--c-timeText);
+  font-style: italic;
+}
+
+#post-status {
+  text-align: center;
+  font-size: 12px;
+  font-weight: 600;
+  min-height: 20px;
+  padding: 4px 10px 8px;
+}
+
+/* ─── Recent Trades Strip (OrderBook) ─── */
+#recent-trades-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 5px 10px;
+  background: rgba(216, 200, 168, 0.32);
+  border-top: 1px solid var(--c-msgBorder);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+#recent-trades-strip.hidden { display: none !important; }
+
+.trade-hist-label {
+  font-weight: 700;
+  color: var(--c-timeText);
+}
+
+.trade-hist-chip {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--c-panelBg);
+  border: 1px solid var(--c-msgBorder);
+  color: var(--c-msgText);
+  font-weight: 600;
+}
+
+/* ─── Top HUD Extras ─── */
+.hud-town-btn { border-color: rgba(255, 215, 0, 0.65); color: #FFE57F; }
+.hud-reset-btn { color: #F5D5A0; }
+.hud-reset-btn:hover { border-color: #EF9A9A; color: #FFCDD2; }
+
+/* ─── Progression & Shop Panel ─── */
+#progression-panel {
+  width: 500px;
+}
+
+.title-pill {
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 700;
+  background: rgba(196, 138, 0, 0.16);
+  color: var(--c-goldText);
+}
+
+#quest-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  background: #FFF6DC;
+  border-bottom: 1.5px solid var(--c-msgBorder);
+  flex-shrink: 0;
+}
+
+.quest-info { flex: 1; min-width: 0; }
+
+.quest-title {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--c-msgText);
+  margin-bottom: 4px;
+}
+
+.quest-count {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--c-timeText);
+}
+
+.quest-reqs {
+  font-size: 11.5px;
+  color: var(--c-msgText);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+}
+
+.quest-reward {
+  font-weight: 700;
+  color: var(--c-goldText);
+}
+
+#prog-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--c-msgBorder);
+  background: var(--c-panelBg);
+  flex-shrink: 0;
+}
+
+.prog-tab-btn {
+  flex: 1;
+  padding: 8px 4px;
+  background: none;
+  border: none;
+  border-bottom: 2.5px solid transparent;
+  color: var(--c-timeText);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.prog-tab-btn.active {
+  color: var(--c-msgText);
+  border-bottom-color: var(--c-inputFocus);
+}
+
+#progression-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.prog-card {
+  padding: 10px 12px;
+  border-radius: 7px;
+  border: 1.5px solid var(--c-msgBorder);
+  background: var(--c-inputBg);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.prog-current-card {
+  background: #F4EDE0;
+  border-color: var(--c-inputBorder);
+}
+
+.prog-next-card {
+  border-color: rgba(196, 138, 0, 0.55);
+}
+
+.prog-complete-card,
+.prog-maxed-card {
+  background: rgba(46, 125, 50, 0.08);
+  border-color: rgba(46, 125, 50, 0.35);
+}
+
+.prog-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.prog-card-title {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--c-msgText);
+}
+
+.prog-lv-pill {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 8px;
+  border-radius: 10px;
+  background: var(--c-inputAreaBg);
+  color: var(--c-msgText);
+}
+
+.prog-lv-pill.is-max {
+  background: rgba(46, 125, 50, 0.16);
+  color: var(--c-successText);
+}
+
+.prog-bar-track {
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(44, 24, 16, 0.15);
+  overflow: hidden;
+  margin: 2px 0;
+}
+
+.prog-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #5A8A44, #D48806);
+  transition: width 0.25s ease;
+}
+
+.prog-stats-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 11.5px;
+  color: var(--c-msgText);
+}
+
+.prog-desc {
+  font-size: 12px;
+  color: var(--c-msgText);
+}
+
+.prog-effect {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--c-successText);
+}
+
+.prog-cost-row {
+  font-size: 11.5px;
+  color: var(--c-timeText);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+}
+
+.prog-primary-btn,
+.prog-action-btn {
+  padding: 6px 12px;
+  border: none;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  background: #B8B0A0;
+  color: #4E453B;
+  transition: background 0.15s;
+}
+
+.prog-primary-btn {
+  width: 100%;
+  padding: 8px;
+  margin-top: 3px;
+}
+
+.prog-primary-btn.is-ready,
+.prog-action-btn.is-ready {
+  background: var(--c-sendBtnBg);
+  color: var(--c-sendBtnText);
+}
+
+.prog-primary-btn.is-ready:hover,
+.prog-action-btn.is-ready:hover {
+  background: var(--c-sendBtnHover);
+}
+
+.prog-primary-btn[disabled],
+.prog-action-btn[disabled] {
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
+.avatar-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(136px, 1fr));
+  gap: 8px;
+}
+
+.avatar-card {
+  padding: 8px;
+  border-radius: 7px;
+  border: 1.5px solid var(--c-msgBorder);
+  background: var(--c-inputBg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  text-align: center;
+}
+
+.avatar-card.is-equipped {
+  border-color: var(--c-inputFocus);
+  background: var(--c-playerMsgBg);
+}
+
+.avatar-thumb {
+  width: 52px;
+  height: 52px;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+.avatar-name {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--c-msgText);
+}
+
+#progression-status {
+  text-align: center;
+  font-size: 12px;
+  font-weight: 700;
+  min-height: 20px;
+  padding: 4px 10px 8px;
+  flex-shrink: 0;
+}
+
+/* ─── Farming Tab (農業プログレッション & ライバル農地) ─── */
+.farm-my-plots {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 7px;
+}
+
+.farm-plot-card {
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1.5px solid var(--c-msgBorder);
+  background: #F4EDE0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.farm-plot-card.is-ripe {
+  background: #FFF6D6;
+  border-color: var(--c-inputFocus);
+}
+
+.farm-plot-thumb {
+  width: 38px;
+  height: 38px;
+  object-fit: contain;
+  border-radius: 4px;
+  background: rgba(109, 76, 31, 0.18);
+  flex-shrink: 0;
+}
+
+.farm-plot-info {
+  flex: 1;
+  min-width: 0;
+  font-size: 11.5px;
+}
+
+.farm-plot-title {
+  font-weight: 700;
+  color: var(--c-msgText);
+}
+
+.farm-plot-stage {
+  font-size: 11px;
+  color: var(--c-timeText);
+}
+
+.farm-rival-strip {
+  font-size: 11px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: rgba(216, 200, 168, 0.35);
+  color: var(--c-msgText);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.rival-farm-chip {
+  padding: 1px 7px;
+  border-radius: 10px;
+  background: var(--c-panelBg);
+  border: 1px solid var(--c-msgBorder);
+  font-weight: 600;
+}
+
+.crop-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 7px;
+}
+
+.crop-card {
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1.5px solid var(--c-msgBorder);
+  background: var(--c-inputBg);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.crop-card.is-locked {
+  opacity: 0.62;
+}
+
+.crop-card-top {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.crop-thumb {
+  width: 34px;
+  height: 34px;
+  object-fit: contain;
+  border-radius: 4px;
+  background: rgba(109, 76, 31, 0.16);
+  flex-shrink: 0;
+}
+
+.crop-title-wrap {
+  flex: 1;
+  min-width: 0;
+}
+
+.crop-name {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--c-msgText);
+}
+
+.crop-time {
+  font-size: 10.5px;
+  color: var(--c-timeText);
+}
+
+.crop-reward {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--c-successText);
+}
+
+/* ─── Cooking Tab & Season Victory Modal ─── */
+.pantry-strip {
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #F4EDE0;
+  border: 1.5px solid var(--c-inputBorder);
+  font-size: 11.5px;
+  color: var(--c-msgText);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.pantry-chip {
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: var(--c-panelBg);
+  border: 1px solid var(--c-msgBorder);
+  font-weight: 700;
+}
+
+.recipe-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 7px;
+}
+
+.recipe-card {
+  padding: 9px 10px;
+  border-radius: 6px;
+  border: 1.5px solid var(--c-msgBorder);
+  background: var(--c-inputBg);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.recipe-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--c-msgText);
+}
+
+.recipe-desc {
+  font-size: 10.5px;
+  color: var(--c-timeText);
+}
+
+.victory-target-banner {
+  padding: 8px 11px;
+  border-radius: 6px;
+  background: #FFF6DC;
+  border: 1.5px solid rgba(196, 138, 0, 0.55);
+  font-size: 11.5px;
+  color: var(--c-msgText);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.victory-target-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 700;
+}
+
+#victory-panel {
+  width: 460px;
+}
+
+#victory-content {
+  padding: 14px 16px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+}
+
+.victory-hero {
+  text-align: center;
+  padding: 12px;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #FFF8E1 0%, #F5E0A6 100%);
+  border: 2px solid #D48806;
+}
+
+.victory-winner-name {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--c-msgText);
+  margin-bottom: 4px;
+}
+
+.victory-reason {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--c-goldText);
+}
+
+#victory-actions {
+  padding: 8px 16px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* ─── Error Banner ─── */
+#error-banner {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  background: var(--c-errorBg);
+  color: var(--c-errorText);
+  border-bottom: 2px solid var(--c-errorBorder);
+  padding: 9px 16px;
+  font-size: 12px;
+  font-family: 'Segoe UI', sans-serif;
+  text-align: center;
+  z-index: 400;
+}
+
+#error-banner.visible { display: block; }
+
+/* ─── Responsive & Accessibility ─── */
+@media (max-width: 900px) {
+  #chat-panel {
+    width: 290px;
+    min-width: 260px;
+  }
+  #controls-hint { display: none; }
+}
+
+@media (max-width: 680px) {
+  #app { flex-direction: column; }
+  #canvas-wrap { height: 55vh; }
+  #chat-panel {
+    width: 100%;
+    min-width: 0;
+    height: 45vh;
+    border-left: none;
+    border-top: 2px solid var(--c-inputBorder);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .typing-dots span { animation: none; opacity: 0.7; }
+  * { transition-duration: 0.01ms !important; }
+}

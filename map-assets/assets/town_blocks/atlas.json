@@ -1,0 +1,697 @@
+{
+  "tileSize": 256,
+  "columns": 6,
+  "camera": "3/4 top-down orthographic",
+  "anchor": {
+    "x": 128,
+    "y": 224,
+    "meaning": "bottom-center gameplay anchor"
+  },
+  "collisionGuidance": "Use the supplied simple rects for buildings, forest, and water. Roads and terrain are passable.",
+  "assets": [
+    {
+      "id": "house_red",
+      "file": "sprites/house_red.png",
+      "tileFile": "tiles/house_red.png",
+      "seamlessTileFile": "seamless_tiles/house_red.png",
+      "kind": "building",
+      "description": "small cozy house with red roof",
+      "atlasIndex": 0,
+      "sourceBounds": {
+        "x": 38,
+        "y": 71,
+        "w": 195,
+        "h": 209
+      },
+      "spriteContentBounds": {
+        "x": 30,
+        "y": 29,
+        "w": 195,
+        "h": 209
+      },
+      "recommendedLayer": "object",
+      "collision": {
+        "type": "rect",
+        "solid": true,
+        "x": 53,
+        "y": 167,
+        "w": 148,
+        "h": 46
+      }
+    },
+    {
+      "id": "house_blue",
+      "file": "sprites/house_blue.png",
+      "tileFile": "tiles/house_blue.png",
+      "seamlessTileFile": "seamless_tiles/house_blue.png",
+      "kind": "building",
+      "description": "larger house with blue roof",
+      "atlasIndex": 1,
+      "sourceBounds": {
+        "x": 261,
+        "y": 47,
+        "w": 240,
+        "h": 234
+      },
+      "spriteContentBounds": {
+        "x": 8,
+        "y": 4,
+        "w": 240,
+        "h": 234
+      },
+      "recommendedLayer": "object",
+      "collision": {
+        "type": "rect",
+        "solid": true,
+        "x": 37,
+        "y": 158,
+        "w": 182,
+        "h": 51
+      }
+    },
+    {
+      "id": "shop_food",
+      "file": "sprites/shop_food.png",
+      "tileFile": "tiles/shop_food.png",
+      "seamlessTileFile": "seamless_tiles/shop_food.png",
+      "kind": "building",
+      "description": "food shop",
+      "atlasIndex": 2,
+      "sourceBounds": {
+        "x": 536,
+        "y": 67,
+        "w": 220,
+        "h": 214
+      },
+      "spriteContentBounds": {
+        "x": 18,
+        "y": 24,
+        "w": 220,
+        "h": 214
+      },
+      "recommendedLayer": "object",
+      "collision": {
+        "type": "rect",
+        "solid": true,
+        "x": 44,
+        "y": 165,
+        "w": 167,
+        "h": 47
+      }
+    },
+    {
+      "id": "shop_clothing",
+      "file": "sprites/shop_clothing.png",
+      "tileFile": "tiles/shop_clothing.png",
+      "seamlessTileFile": "seamless_tiles/shop_clothing.png",
+      "kind": "building",
+      "description": "clothing shop",
+      "atlasIndex": 3,
+      "sourceBounds": {
+        "x": 790,
+        "y": 66,
+        "w": 216,
+        "h": 215
+      },
+      "spriteContentBounds": {
+        "x": 20,
+        "y": 23,
+        "w": 216,
+        "h": 215
+      },
+      "recommendedLayer": "object",
+      "collision": {
+        "type": "rect",
+        "solid": true,
+        "x": 46,
+        "y": 165,
+        "w": 164,
+        "h": 47
+      }
+    },
+    {
+      "id": "shop_interior",
+      "file": "sprites/shop_interior.png",
+      "tileFile": "tiles/shop_interior.png",
+      "seamlessTileFile": "seamless_tiles/shop_interior.png",
+      "kind": "building",
+      "description": "interior and furniture shop",
+      "atlasIndex": 4,
+      "sourceBounds": {
+        "x": 1040,
+        "y": 67,
+        "w": 216,
+        "h": 214
+      },
+      "spriteContentBounds": {
+        "x": 20,
+        "y": 24,
+        "w": 216,
+        "h": 214
+      },
+      "recommendedLayer": "object",
+      "collision": {
+        "type": "rect",
+        "solid": true,
+        "x": 46,
+        "y": 165,
+        "w": 164,
+        "h": 47
+      }
+    },
+    {
+      "id": "shop_pawn",
+      "file": "sprites/shop_pawn.png",
+      "tileFile": "tiles/shop_pawn.png",
+      "seamlessTileFile": "seamless_tiles/shop_pawn.png",
+      "kind": "building",
+      "description": "pawn or secondhand shop",
+      "atlasIndex": 5,
+      "sourceBounds": {
+        "x": 1287,
+        "y": 69,
+        "w": 204,
+        "h": 212
+      },
+      "spriteContentBounds": {
+        "x": 26,
+        "y": 26,
+        "w": 204,
+        "h": 212
+      },
+      "recommendedLayer": "object",
+      "collision": {
+        "type": "rect",
+        "solid": true,
+        "x": 50,
+        "y": 166,
+        "w": 155,
+        "h": 47
+      }
+    },
+    {
+      "id": "restaurant",
+      "file": "sprites/restaurant.png",
+      "tileFile": "tiles/restaurant.png",
+      "seamlessTileFile": "seamless_tiles/restaurant.png",
+      "kind": "building",
+      "description": "small restaurant",
+      "atlasIndex": 6,
+      "sourceBounds": {
+        "x": 30,
+        "y": 333,
+        "w": 212,
+        "h": 199
+      },
+      "spriteContentBounds": {
+        "x": 22,
+        "y": 39,
+        "w": 212,
+        "h": 199
+      },
+      "recommendedLayer": "object",
+      "collision": {
+        "type": "rect",
+        "solid": true,
+        "x": 47,
+        "y": 170,
+        "w": 161,
+        "h": 44
+      }
+    },
+    {
+      "id": "builder_shop",
+      "file": "sprites/builder_shop.png",
+      "tileFile": "tiles/builder_shop.png",
+      "seamlessTileFile": "seamless_tiles/builder_shop.png",
+      "kind": "building",
+      "description": "construction and carpenter shop",
+      "atlasIndex": 7,
+      "sourceBounds": {
+        "x": 275,
+        "y": 311,
+        "w": 218,
+        "h": 221
+      },
+      "spriteContentBounds": {
+        "x": 19,
+        "y": 17,
+        "w": 218,
+        "h": 221
+      },
+      "recommendedLayer": "object",
+      "collision": {
+        "type": "rect",
+        "solid": true,
+        "x": 45,
+        "y": 163,
+        "w": 166,
+        "h": 49
+      }
+    },
+    {
+      "id": "farm_coop",
+      "file": "sprites/farm_coop.png",
+      "tileFile": "tiles/farm_coop.png",
+      "seamlessTileFile": "seamless_tiles/farm_coop.png",
+      "kind": "building",
+      "description": "agricultural cooperative shop",
+      "atlasIndex": 8,
+      "sourceBounds": {
+        "x": 525,
+        "y": 343,
+        "w": 230,
+        "h": 189
+      },
+      "spriteContentBounds": {
+        "x": 13,
+        "y": 49,
+        "w": 230,
+        "h": 189
+      },
+      "recommendedLayer": "object",
+      "collision": {
+        "type": "rect",
+        "solid": true,
+        "x": 41,
+        "y": 174,
+        "w": 175,
+        "h": 42
+      }
+    },
+    {
+      "id": "bank",
+      "file": "sprites/bank.png",
+      "tileFile": "tiles/bank.png",
+      "seamlessTileFile": "seamless_tiles/bank.png",
+      "kind": "building",
+      "description": "small bank",
+      "atlasIndex": 9,
+      "sourceBounds": {
+        "x": 782,
+        "y": 337,
+        "w": 215,
+        "h": 195
+      },
+      "spriteContentBounds": {
+        "x": 20,
+        "y": 43,
+        "w": 215,
+        "h": 195
+      },
+      "recommendedLayer": "object",
+      "collision": {
+        "type": "rect",
+        "solid": true,
+        "x": 46,
+        "y": 172,
+        "w": 163,
+        "h": 43
+      }
+    },
+    {
+      "id": "town_hall",
+      "file": "sprites/town_hall.png",
+      "tileFile": "tiles/town_hall.png",
+      "seamlessTileFile": "seamless_tiles/town_hall.png",
+      "kind": "building",
+      "description": "town hall or community building",
+      "atlasIndex": 10,
+      "sourceBounds": {
+        "x": 1025,
+        "y": 296,
+        "w": 245,
+        "h": 236
+      },
+      "spriteContentBounds": {
+        "x": 5,
+        "y": 2,
+        "w": 245,
+        "h": 236
+      },
+      "recommendedLayer": "object",
+      "collision": {
+        "type": "rect",
+        "solid": true,
+        "x": 34,
+        "y": 158,
+        "w": 186,
+        "h": 52
+      }
+    },
+    {
+      "id": "agent_hut",
+      "file": "sprites/agent_hut.png",
+      "tileFile": "tiles/agent_hut.png",
+      "seamlessTileFile": "seamless_tiles/agent_hut.png",
+      "kind": "building",
+      "description": "tiny agent hut or workshop",
+      "atlasIndex": 11,
+      "sourceBounds": {
+        "x": 1290,
+        "y": 318,
+        "w": 201,
+        "h": 214
+      },
+      "spriteContentBounds": {
+        "x": 27,
+        "y": 24,
+        "w": 201,
+        "h": 214
+      },
+      "recommendedLayer": "object",
+      "collision": {
+        "type": "rect",
+        "solid": true,
+        "x": 51,
+        "y": 165,
+        "w": 153,
+        "h": 47
+      }
+    },
+    {
+      "id": "road_straight",
+      "file": "sprites/road_straight.png",
+      "tileFile": "tiles/road_straight.png",
+      "seamlessTileFile": "seamless_tiles/road_straight.png",
+      "kind": "road",
+      "description": "straight cobblestone road tile",
+      "atlasIndex": 12,
+      "sourceBounds": {
+        "x": 34,
+        "y": 569,
+        "w": 203,
+        "h": 173
+      },
+      "spriteContentBounds": {
+        "x": 26,
+        "y": 41,
+        "w": 203,
+        "h": 173
+      },
+      "recommendedLayer": "background",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "road_corner",
+      "file": "sprites/road_corner.png",
+      "tileFile": "tiles/road_corner.png",
+      "seamlessTileFile": "seamless_tiles/road_corner.png",
+      "kind": "road",
+      "description": "curved road corner tile",
+      "atlasIndex": 13,
+      "sourceBounds": {
+        "x": 277,
+        "y": 569,
+        "w": 212,
+        "h": 175
+      },
+      "spriteContentBounds": {
+        "x": 21,
+        "y": 40,
+        "w": 213,
+        "h": 175
+      },
+      "recommendedLayer": "background",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "road_t",
+      "file": "sprites/road_t.png",
+      "tileFile": "tiles/road_t.png",
+      "seamlessTileFile": "seamless_tiles/road_t.png",
+      "kind": "road",
+      "description": "road T-junction tile",
+      "atlasIndex": 14,
+      "sourceBounds": {
+        "x": 530,
+        "y": 569,
+        "w": 217,
+        "h": 176
+      },
+      "spriteContentBounds": {
+        "x": 19,
+        "y": 40,
+        "w": 217,
+        "h": 176
+      },
+      "recommendedLayer": "background",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "road_cross",
+      "file": "sprites/road_cross.png",
+      "tileFile": "tiles/road_cross.png",
+      "seamlessTileFile": "seamless_tiles/road_cross.png",
+      "kind": "road",
+      "description": "road crossing tile",
+      "atlasIndex": 15,
+      "sourceBounds": {
+        "x": 783,
+        "y": 568,
+        "w": 214,
+        "h": 177
+      },
+      "spriteContentBounds": {
+        "x": 21,
+        "y": 39,
+        "w": 214,
+        "h": 178
+      },
+      "recommendedLayer": "background",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "dirt_path",
+      "file": "sprites/dirt_path.png",
+      "tileFile": "tiles/dirt_path.png",
+      "seamlessTileFile": "seamless_tiles/dirt_path.png",
+      "kind": "terrain",
+      "description": "dirt path tile",
+      "atlasIndex": 16,
+      "sourceBounds": {
+        "x": 1032,
+        "y": 567,
+        "w": 219,
+        "h": 178
+      },
+      "spriteContentBounds": {
+        "x": 18,
+        "y": 39,
+        "w": 219,
+        "h": 178
+      },
+      "recommendedLayer": "background",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "grass_field",
+      "file": "sprites/grass_field.png",
+      "tileFile": "tiles/grass_field.png",
+      "seamlessTileFile": "seamless_tiles/grass_field.png",
+      "kind": "terrain",
+      "description": "grassy field tile with flowers",
+      "atlasIndex": 17,
+      "sourceBounds": {
+        "x": 1280,
+        "y": 568,
+        "w": 217,
+        "h": 178
+      },
+      "spriteContentBounds": {
+        "x": 19,
+        "y": 39,
+        "w": 217,
+        "h": 178
+      },
+      "recommendedLayer": "background",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "wild_meadow",
+      "file": "sprites/wild_meadow.png",
+      "tileFile": "tiles/wild_meadow.png",
+      "seamlessTileFile": "seamless_tiles/wild_meadow.png",
+      "kind": "terrain",
+      "description": "wild meadow tile",
+      "atlasIndex": 18,
+      "sourceBounds": {
+        "x": 31,
+        "y": 777,
+        "w": 207,
+        "h": 196
+      },
+      "spriteContentBounds": {
+        "x": 24,
+        "y": 30,
+        "w": 207,
+        "h": 196
+      },
+      "recommendedLayer": "background",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "farm_plot",
+      "file": "sprites/farm_plot.png",
+      "tileFile": "tiles/farm_plot.png",
+      "seamlessTileFile": "seamless_tiles/farm_plot.png",
+      "kind": "terrain",
+      "description": "farm plot tile",
+      "atlasIndex": 19,
+      "sourceBounds": {
+        "x": 272,
+        "y": 777,
+        "w": 218,
+        "h": 196
+      },
+      "spriteContentBounds": {
+        "x": 19,
+        "y": 30,
+        "w": 218,
+        "h": 196
+      },
+      "recommendedLayer": "background",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    },
+    {
+      "id": "forest_edge",
+      "file": "sprites/forest_edge.png",
+      "tileFile": "tiles/forest_edge.png",
+      "seamlessTileFile": "seamless_tiles/forest_edge.png",
+      "kind": "obstacle",
+      "description": "forest edge block",
+      "atlasIndex": 20,
+      "sourceBounds": {
+        "x": 524,
+        "y": 765,
+        "w": 221,
+        "h": 207
+      },
+      "spriteContentBounds": {
+        "x": 17,
+        "y": 31,
+        "w": 222,
+        "h": 207
+      },
+      "recommendedLayer": "background",
+      "collision": {
+        "type": "rect",
+        "solid": true,
+        "x": 30,
+        "y": 68,
+        "w": 195,
+        "h": 145
+      }
+    },
+    {
+      "id": "dense_forest",
+      "file": "sprites/dense_forest.png",
+      "tileFile": "tiles/dense_forest.png",
+      "seamlessTileFile": "seamless_tiles/dense_forest.png",
+      "kind": "obstacle",
+      "description": "dense forest block",
+      "atlasIndex": 21,
+      "sourceBounds": {
+        "x": 772,
+        "y": 755,
+        "w": 239,
+        "h": 217
+      },
+      "spriteContentBounds": {
+        "x": 8,
+        "y": 21,
+        "w": 239,
+        "h": 217
+      },
+      "recommendedLayer": "background",
+      "collision": {
+        "type": "rect",
+        "solid": true,
+        "x": 22,
+        "y": 60,
+        "w": 210,
+        "h": 152
+      }
+    },
+    {
+      "id": "pond_edge",
+      "file": "sprites/pond_edge.png",
+      "tileFile": "tiles/pond_edge.png",
+      "seamlessTileFile": "seamless_tiles/pond_edge.png",
+      "kind": "water",
+      "description": "pond or water edge tile",
+      "atlasIndex": 22,
+      "sourceBounds": {
+        "x": 1039,
+        "y": 782,
+        "w": 210,
+        "h": 191
+      },
+      "spriteContentBounds": {
+        "x": 23,
+        "y": 47,
+        "w": 210,
+        "h": 191
+      },
+      "recommendedLayer": "background",
+      "collision": {
+        "type": "rect",
+        "solid": true,
+        "x": 33,
+        "y": 81,
+        "w": 189,
+        "h": 118
+      }
+    },
+    {
+      "id": "plaza_stone",
+      "file": "sprites/plaza_stone.png",
+      "tileFile": "tiles/plaza_stone.png",
+      "seamlessTileFile": "seamless_tiles/plaza_stone.png",
+      "kind": "terrain",
+      "description": "plaza stone tile",
+      "atlasIndex": 23,
+      "sourceBounds": {
+        "x": 1277,
+        "y": 783,
+        "w": 225,
+        "h": 190
+      },
+      "spriteContentBounds": {
+        "x": 15,
+        "y": 33,
+        "w": 225,
+        "h": 190
+      },
+      "recommendedLayer": "background",
+      "collision": {
+        "type": "none",
+        "solid": false
+      }
+    }
+  ]
+}
