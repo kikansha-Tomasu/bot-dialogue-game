@@ -50,14 +50,16 @@ class TTSManager {
       return;
     }
     try {
-      this._ttsWorker = new Worker("js/hf-tts-worker.js?v=gh6", { type: "module" });
+      this._ttsWorker = new Worker("js/hf-tts-worker.js?v=gh7", { type: "module" });
       this.browserTtsLoading = true;
       this.browserTtsError = "";
       this._ttsWorker.onmessage = (event) => {
         const msg = event.data || {};
         if (msg.type === "progress") {
-          this.browserTtsProgress = msg.percent || this.browserTtsProgress;
-          if (this.onStateChange) this.onStateChange(this.enabled, this.localAvailable);
+          if (!this.browserTtsReady) {
+            this.browserTtsProgress = msg.percent || this.browserTtsProgress;
+            if (this.onStateChange) this.onStateChange(this.enabled, this.localAvailable);
+          }
         } else if (msg.type === "ready") {
           this.browserTtsReady = true;
           this.browserTtsLoading = false;

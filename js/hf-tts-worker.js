@@ -7,9 +7,9 @@
 // ============================================================
 
 import { PiperPlus } from "https://cdn.jsdelivr.net/npm/piper-plus@0.9.1/+esm";
-import * as ort from "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.21.0/dist/ort.min.mjs";
+import * as ort from "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/ort.min.mjs";
 
-const ORT_DIST = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.21.0/dist/";
+const ORT_DIST = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/";
 // jsDelivr は 50MB 超の WASM を 403 で制限するため、CORS 許可済みの unpkg から Rust WASM G2P を取得
 const WASM_G2P_URL = "https://unpkg.com/piper-plus@0.9.1/dist/rust-wasm/piper_plus_wasm.js";
 
