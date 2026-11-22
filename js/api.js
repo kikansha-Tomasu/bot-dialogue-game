@@ -99,7 +99,7 @@ class HuggingFaceClient {
       return;
     }
     try {
-      this._worker = new Worker("js/hf-browser-worker.js", { type: "module" });
+      this._worker = new Worker("js/hf-browser-worker.js?v=gh4", { type: "module" });
       this._workerLoading = true;
       this._workerError = "";
       this._workerStage = "connecting";

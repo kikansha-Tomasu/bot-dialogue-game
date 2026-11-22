@@ -281,6 +281,11 @@ class Game {
   _setupInput() {
     window.addEventListener("keydown", e => {
       if (e.key === "Escape") {
+        const hfOv = document.getElementById("hf-loader-overlay");
+        if (hfOv && !hfOv.classList.contains("hidden")) {
+          this._hfBannerDismissed = true;
+          hfOv.classList.add("hidden");
+        }
         if (this.buildingManager.pendingType) {
           this.buildingManager.cancelPlacement();
           this.canvas.style.cursor = "default";
@@ -294,6 +299,13 @@ class Game {
 
       const key = e.key.toLowerCase();
       this.keysHeld.add(key);
+
+      if (key === "w" || key === "a" || key === "s" || key === "d" || key.startsWith("arrow")) {
+        if (!this._hfBannerDismissed && this.apiClient?.mode === "browser-hf" && !this.apiClient._workerReady) {
+          this._hfBannerDismissed = true;
+          document.getElementById("hf-loader-overlay")?.classList.add("hidden");
+        }
+      }
 
       if (e.repeat) return;
       if (key === "i") this._toggleInventoryPanel();
@@ -875,12 +887,26 @@ class Game {
     document.getElementById("hf-loader-close")?.addEventListener("click", e => {
       e.currentTarget.blur();
       this._hfBannerDismissed = true;
-      document.getElementById("hf-loader-banner")?.classList.add("hidden");
+      document.getElementById("hf-loader-overlay")?.classList.add("hidden");
+    });
+    document.getElementById("hf-loader-overlay")?.addEventListener("click", e => {
+      if (e.target === e.currentTarget) {
+        this._hfBannerDismissed = true;
+        e.currentTarget.classList.add("hidden");
+      }
     });
     document.getElementById("hf-loader-retry")?.addEventListener("click", e => {
       e.currentTarget.blur();
       this._hfBannerDismissed = false;
       this.apiClient._initBrowserWorker();
+      this._updateStatusPill();
+    });
+    document.getElementById("chat-hf-loader")?.addEventListener("click", () => {
+      if (this.apiClient.mode !== "browser-hf") return;
+      this._hfBannerDismissed = false;
+      if (!this.apiClient._workerReady && !this.apiClient._workerLoading) {
+        this.apiClient._initBrowserWorker();
+      }
       this._updateStatusPill();
     });
     document.getElementById("town-badge")?.addEventListener("click", e => {
@@ -994,21 +1020,27 @@ class Game {
   }
 
   _updateHfLoaderBanner() {
-    const banner = document.getElementById("hf-loader-banner");
-    if (!banner) return;
+    const overlay = document.getElementById("hf-loader-overlay");
+    const chatStrip = document.getElementById("chat-hf-loader");
+    if (!overlay && !chatStrip) return;
 
     if (this.apiClient.mode !== "browser-hf") {
-      banner.classList.add("hidden");
+      overlay?.classList.add("hidden");
+      chatStrip?.classList.add("hidden");
       return;
     }
 
-    const titleEl = document.getElementById("hf-loader-title");
-    const pctEl   = document.getElementById("hf-loader-pct");
-    const subEl   = document.getElementById("hf-loader-sub");
-    const sizeEl  = document.getElementById("hf-loader-size");
-    const trackEl = document.getElementById("hf-progress-track");
-    const fillEl  = document.getElementById("hf-progress-fill");
-    const retryEl = document.getElementById("hf-loader-retry");
+    const titleEl    = document.getElementById("hf-loader-title");
+    const pctEl      = document.getElementById("hf-loader-pct");
+    const subEl      = document.getElementById("hf-loader-sub");
+    const sizeEl     = document.getElementById("hf-loader-size");
+    const trackEl    = document.getElementById("hf-progress-track");
+    const fillEl     = document.getElementById("hf-progress-fill");
+    const retryEl    = document.getElementById("hf-loader-retry");
+    const closeBtn   = document.getElementById("hf-loader-close");
+    const chatLblEl  = document.getElementById("chat-hf-label");
+    const chatPctEl  = document.getElementById("chat-hf-pct");
+    const chatFillEl = document.getElementById("chat-hf-fill");
 
     const formatMB = (bytes) => {
       if (!bytes || bytes <= 0) return "0";
@@ -1033,9 +1065,19 @@ class Game {
           text: `🤗 Hugging Face AI の読み込みが完了しました！（${devTag || "Browser"}）キャラクターと自然な会話ができます`,
           isAI: false,
         });
-        if (!this._hfBannerDismissed) {
-          banner.className = "is-ready";
-          if (titleEl) titleEl.textContent = "✅ HF AI 準備完了！";
+
+        if (chatStrip) {
+          chatStrip.className = "is-ready";
+          if (chatLblEl) chatLblEl.textContent = "✅ HF AI 準備完了！";
+          if (chatPctEl) chatPctEl.textContent = "100%";
+          if (chatFillEl) {
+            chatFillEl.classList.remove("is-indeterminate");
+            chatFillEl.style.width = "100%";
+          }
+        }
+        if (overlay && !this._hfBannerDismissed) {
+          overlay.className = "is-ready";
+          if (titleEl) titleEl.textContent = "✅ Hugging Face AI 準備完了！";
           if (pctEl) pctEl.textContent = "100%";
           if (subEl) subEl.textContent = "自然なAI会話が有効になりました";
           if (sizeEl) sizeEl.textContent = devTag;
@@ -1044,78 +1086,119 @@ class Game {
             fillEl.classList.remove("is-indeterminate");
             fillEl.style.width = "100%";
           }
+          if (closeBtn) closeBtn.textContent = "▶ ゲームを始める";
           retryEl?.classList.add("hidden");
-          clearTimeout(this._hfBannerHideTimer);
-          this._hfBannerHideTimer = setTimeout(() => {
-            banner.classList.add("hidden");
-          }, 3500);
         }
+        clearTimeout(this._hfBannerHideTimer);
+        this._hfBannerHideTimer = setTimeout(() => {
+          overlay?.classList.add("hidden");
+          chatStrip?.classList.add("hidden");
+        }, 1800);
       }
       return;
     }
 
     clearTimeout(this._hfBannerHideTimer);
-    if (this._hfBannerDismissed) {
-      banner.classList.add("hidden");
-      return;
-    }
 
     if (this.apiClient._workerLoading) {
       const pct = Math.max(0, Math.min(99, this.apiClient._workerProgress || 0));
       const stage = this.apiClient._workerStage || "connecting";
       const loaded = this.apiClient._workerLoadedBytes || 0;
       const total = this.apiClient._workerTotalBytes || 0;
+      const sizeText = total > 0
+        ? `${formatMB(loaded)} / ${formatMB(total)} MB${devTag ? ` · ${devTag}` : ""}`
+        : devTag;
 
-      banner.className = "is-loading";
-      retryEl?.classList.add("hidden");
-      if (trackEl) trackEl.setAttribute("aria-valuenow", String(pct));
+      const isInit = stage === "initializing";
+      const isDl = !isInit && (stage === "downloading" || pct > 0);
+      const pctText = isInit ? "99%" : isDl ? `${pct}%` : "...";
 
-      if (stage === "initializing") {
-        if (titleEl) titleEl.textContent = "⚙️ HF AI 起動中...";
-        if (pctEl) pctEl.textContent = "99%";
-        if (subEl) subEl.textContent = "あと少しで完了・このまま操作して遊べます";
-        if (fillEl) {
-          fillEl.classList.add("is-indeterminate");
-          fillEl.style.width = "99%";
+      // 1. チャット欄常設の進捗バー（中央カードを閉じた後も必ず見える）
+      if (chatStrip) {
+        chatStrip.className = "is-loading";
+        if (chatLblEl) {
+          chatLblEl.textContent = isInit
+            ? "⚙️ HF AI 起動中...（あと少し）"
+            : isDl
+              ? `🤗 HF AI 読込中${sizeText ? ` (${sizeText})` : ""}`
+              : "🤗 HF AI モデル接続中...";
         }
-      } else if (stage === "downloading" || pct > 0) {
-        if (titleEl) titleEl.textContent = "🤗 HF AI モデル読込中";
-        if (pctEl) pctEl.textContent = `${pct}%`;
-        if (subEl) subEl.textContent = "初回のみ読込中・このまま操作して遊べます";
-        if (fillEl) {
-          fillEl.classList.remove("is-indeterminate");
-          fillEl.style.width = `${Math.max(2, pct)}%`;
-        }
-      } else {
-        if (titleEl) titleEl.textContent = "🤗 HF AI モデル接続中...";
-        if (pctEl) pctEl.textContent = "...";
-        if (subEl) subEl.textContent = "初回のみ読込中・このまま操作して遊べます";
-        if (fillEl) {
-          fillEl.classList.add("is-indeterminate");
+        if (chatPctEl) chatPctEl.textContent = pctText;
+        if (chatFillEl) {
+          if (isDl) {
+            chatFillEl.classList.remove("is-indeterminate");
+            chatFillEl.style.width = `${Math.max(2, pct)}%`;
+          } else {
+            chatFillEl.classList.add("is-indeterminate");
+            chatFillEl.style.width = isInit ? "99%" : "";
+          }
         }
       }
 
-      if (sizeEl) {
-        if (total > 0) {
-          sizeEl.textContent = `${formatMB(loaded)} / ${formatMB(total)} MB${devTag ? ` · ${devTag}` : ""}`;
+      // 2. 画面中央のメイン読み込みカード
+      if (overlay) {
+        if (this._hfBannerDismissed) {
+          overlay.classList.add("hidden");
         } else {
-          sizeEl.textContent = devTag;
+          overlay.className = "is-loading";
+          retryEl?.classList.add("hidden");
+          if (closeBtn) closeBtn.textContent = "▶ 読み込みを待ちながら先に遊ぶ";
+          if (trackEl) trackEl.setAttribute("aria-valuenow", String(pct));
+          if (titleEl) {
+            titleEl.textContent = isInit
+              ? "⚙️ Hugging Face AI を起動中..."
+              : isDl
+                ? "🤗 Hugging Face AI を読み込み中"
+                : "🤗 Hugging Face AI へ接続中...";
+          }
+          if (pctEl) pctEl.textContent = pctText;
+          if (subEl) {
+            subEl.textContent = isInit
+              ? "あと少しで完了します（このまま遊べます）"
+              : "初回のみブラウザへ保存（次回から即起動）";
+          }
+          if (sizeEl) sizeEl.textContent = sizeText;
+          if (fillEl) {
+            if (isDl) {
+              fillEl.classList.remove("is-indeterminate");
+              fillEl.style.width = `${Math.max(2, pct)}%`;
+            } else {
+              fillEl.classList.add("is-indeterminate");
+              fillEl.style.width = isInit ? "99%" : "";
+            }
+          }
         }
       }
       return;
     }
 
-    // 読み込みエラー状態（クリックまたは自動再試行で復帰可能）
-    banner.className = "is-error";
-    if (titleEl) titleEl.textContent = "⚠️ HF AI 読込エラー";
-    if (pctEl) pctEl.textContent = "";
-    if (subEl) subEl.textContent = "オフライン応答で遊べます（自動再試行中）";
-    if (sizeEl) sizeEl.textContent = "";
-    if (fillEl) {
-      fillEl.classList.remove("is-indeterminate");
-      fillEl.style.width = "100%";
+    // 読み込みエラー状態（チャット欄バー・中央カードの両方から再読込可能）
+    if (chatStrip) {
+      chatStrip.className = "is-error";
+      if (chatLblEl) chatLblEl.textContent = "⚠️ HF AI 読込エラー（クリックで再読込）";
+      if (chatPctEl) chatPctEl.textContent = "再試行";
+      if (chatFillEl) {
+        chatFillEl.classList.remove("is-indeterminate");
+        chatFillEl.style.width = "100%";
+      }
     }
-    retryEl?.classList.remove("hidden");
+    if (overlay) {
+      if (this._hfBannerDismissed) {
+        overlay.classList.add("hidden");
+      } else {
+        overlay.className = "is-error";
+        if (titleEl) titleEl.textContent = "⚠️ Hugging Face AI の読み込みに失敗";
+        if (pctEl) pctEl.textContent = "";
+        if (subEl) subEl.textContent = "オフライン応答でそのまま遊べます（自動再試行中）";
+        if (sizeEl) sizeEl.textContent = "";
+        if (closeBtn) closeBtn.textContent = "オフライン応答で遊ぶ";
+        if (fillEl) {
+          fillEl.classList.remove("is-indeterminate");
+          fillEl.style.width = "100%";
+        }
+        retryEl?.classList.remove("hidden");
+      }
+    }
   }
 
   _setupChatUI() {

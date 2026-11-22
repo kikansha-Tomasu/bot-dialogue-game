@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Bot対話ゲーム</title>
-  <script src="colors.js?v=gh3"></script>
-  <link rel="stylesheet" href="css/style.css?v=gh3">
+  <script src="colors.js?v=gh4"></script>
+  <link rel="stylesheet" href="css/style.css?v=gh4">
 </head>
 <body>
 
@@ -200,21 +200,25 @@
       <button id="btn-reset-save" type="button" class="hud-pill hud-reset-btn" title="セーブデータを初期化して最初から始める">↺ 初期化</button>
     </div>
 
-    <!-- ブラウザ内 Hugging Face AI 読み込み進捗バナー（サーバー不要モード時のみ表示・操作を妨げない） -->
-    <div id="hf-loader-banner" class="hidden" role="status" aria-live="polite">
-      <div class="hf-loader-top">
-        <span id="hf-loader-spinner" class="hf-spinner" aria-hidden="true"></span>
-        <span id="hf-loader-title">🤗 HF AI 準備中...</span>
-        <span id="hf-loader-pct"></span>
-        <button id="hf-loader-retry" type="button" class="hf-loader-retry hidden">再読込</button>
-        <button id="hf-loader-close" type="button" class="hf-loader-close" aria-label="読み込み表示を閉じる">✕</button>
-      </div>
-      <div id="hf-progress-track" class="hf-progress-track" role="progressbar" aria-label="Hugging Face AIモデル読み込み進捗" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
-        <div id="hf-progress-fill" class="hf-progress-fill is-indeterminate"></div>
-      </div>
-      <div class="hf-loader-meta">
-        <span id="hf-loader-sub">初回のみ読込中・このまま操作して遊べます</span>
-        <span id="hf-loader-size"></span>
+    <!-- ブラウザ内 Hugging Face AI 読み込み中央カード（サーバー不要モード時のみ表示・そのまま操作開始も可能） -->
+    <div id="hf-loader-overlay" class="hidden" role="status" aria-live="polite">
+      <div id="hf-loader-card">
+        <div class="hf-loader-top">
+          <span id="hf-loader-spinner" class="hf-spinner" aria-hidden="true"></span>
+          <span id="hf-loader-title">🤗 Hugging Face AI を読み込み中</span>
+          <span id="hf-loader-pct">0%</span>
+        </div>
+        <div id="hf-progress-track" class="hf-progress-track" role="progressbar" aria-label="Hugging Face AIモデル読み込み進捗" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <div id="hf-progress-fill" class="hf-progress-fill is-indeterminate"></div>
+        </div>
+        <div class="hf-loader-meta">
+          <span id="hf-loader-sub">初回のみブラウザへ保存（次回から即起動）</span>
+          <span id="hf-loader-size"></span>
+        </div>
+        <div class="hf-loader-actions">
+          <button id="hf-loader-retry" type="button" class="hf-loader-retry hidden">🔄 再読込する</button>
+          <button id="hf-loader-close" type="button" class="hf-loader-play-btn">▶ 読み込みを待ちながら先に遊ぶ</button>
+        </div>
       </div>
     </div>
 
@@ -240,6 +244,17 @@
       <div class="hint">@名前 を選ぶか入力して AI に話しかけよう</div>
     </div>
 
+    <!-- チャット欄常設のコンパクト HF AI 読み込みバー（読み込み中のみ表示） -->
+    <div id="chat-hf-loader" class="hidden" role="status" aria-live="polite">
+      <div class="chat-hf-top">
+        <span id="chat-hf-label">🤗 AIモデル読込中...</span>
+        <span id="chat-hf-pct"></span>
+      </div>
+      <div class="chat-hf-track">
+        <div id="chat-hf-fill" class="chat-hf-fill is-indeterminate"></div>
+      </div>
+    </div>
+
     <div id="chat-history" role="log" aria-live="polite" aria-relevant="additions"></div>
 
     <div id="chat-input-area">
@@ -261,22 +276,22 @@
 </div>
 
 <!-- スクリプト読み込み順序が重要 -->
-<script src="js/config.js?v=gh3"></script>
-<script src="js/resources.js?v=gh3"></script>
-<script src="js/inventory.js?v=gh3"></script>
-<script src="js/buildings.js?v=gh3"></script>
-<script src="js/trade.js?v=gh3"></script>
-<script src="js/pathfinding.js?v=gh3"></script>
-<script src="js/farming.js?v=gh3"></script>
-<script src="js/progression.js?v=gh3"></script>
-<script src="js/storage.js?v=gh3"></script>
-<script src="js/characters.js?v=gh3"></script>
-<script src="js/map.js?v=gh3"></script>
-<script src="js/chat.js?v=gh3"></script>
-<script src="js/api.js?v=gh3"></script>
-<script src="js/tts.js?v=gh3"></script>
-<script src="js/ai-brain.js?v=gh3"></script>
-<script src="js/game.js?v=gh3"></script>
+<script src="js/config.js?v=gh4"></script>
+<script src="js/resources.js?v=gh4"></script>
+<script src="js/inventory.js?v=gh4"></script>
+<script src="js/buildings.js?v=gh4"></script>
+<script src="js/trade.js?v=gh4"></script>
+<script src="js/pathfinding.js?v=gh4"></script>
+<script src="js/farming.js?v=gh4"></script>
+<script src="js/progression.js?v=gh4"></script>
+<script src="js/storage.js?v=gh4"></script>
+<script src="js/characters.js?v=gh4"></script>
+<script src="js/map.js?v=gh4"></script>
+<script src="js/chat.js?v=gh4"></script>
+<script src="js/api.js?v=gh4"></script>
+<script src="js/tts.js?v=gh4"></script>
+<script src="js/ai-brain.js?v=gh4"></script>
+<script src="js/game.js?v=gh4"></script>
 
 </body>
 </html>
