@@ -954,3 +954,75 @@ test("Audio-synchronized chat & movement: delays chat until audio starts, holds 
   alice.updateWander(0.2, 800, 600, null);
   assert.ok(alice.x > 200);
 });
+
+test("LLM Output Quality & Action Speech: rejects garbled WebGPU tokens, removes q4f16, and generates gather/farm/trade speech via LLM", async () => {
+  // 1. 報告された典型的な文字化け・断片トークン列を確実に拒否し、正常な日本語は通すこと
+  const garbled = "eloído あ っé っ ellen 2らindedoo ど \uFFFD に せーや\uFFFD ゛ elo oo ez ǎ のア うん loquentの そら 2 ア \u0365";
+  assert.equal(HuggingFaceClient.isCorruptedText(garbled), true);
+  assert.equal(HuggingFaceClient.cleanDialogueResponse(garbled, "Player"), "");
+  assert.equal(HuggingFaceClient.sanitizeAnnounceMessage(garbled, "Player"), null);
+
+  assert.equal(HuggingFaceClient.isCorruptedText("@Player 🪵木材を採集したよ！次は取引板に出してみようかな。"), false);
+  assert.equal(
+    HuggingFaceClient.cleanDialogueResponse("@Player 木材を採集したよ！いい天気だね。", "Player"),
+    "@Player 木材を採集したよ！いい天気だね。"
+  );
+
+  // 2. hf-browser-worker.js に不安定な q4f16 が残っておらず、起動時セルフテストと自動WASM退避があること
+  const browserWorkerSrc = fs.readFileSync(path.join(rootDir, "js/hf-browser-worker.js"), "utf8");
+  assert.equal(browserWorkerSrc.includes('dtype: "q4f16"'), false, "不安定な WebGPU q4f16 が除去されていること");
+  assert.match(browserWorkerSrc, /function\s+verifyGeneratorHealth/);
+  assert.match(browserWorkerSrc, /function\s+isCorruptedJapanese/);
+  assert.match(browserWorkerSrc, /device:\s*"webgpu",\s*dtype:\s*"q4"/);
+  assert.match(browserWorkerSrc, /device:\s*"wasm",\s*dtype:\s*"q8"/);
+
+  // 3. 資源採集・取引反応などの行動アナウンスが定型文ではなく LLM (callAI) で生成されること
+  const chars = buildCharacters(800, 600);
+  const alice = chars.find(c => c.id === "alice");
+  const player = chars.find(c => c.id === "player");
+  const cm = new ChatManager();
+  const rm = new ResourceManager();
+  rm.init(800, 600);
+
+  const promptsSent = [];
+  const fakeApi = {
+    mode: "browser-hf",
+    _workerReady: true,
+    async callAI(char, prompt, targetName) {
+      promptsSent.push({ charId: char.id, prompt, targetName });
+      return `@${targetName} いい木材が見つかったよ！あとで取引板で勝負しようね。`;
+    },
+  };
+  const brain = new AIBrain(chars, cm, fakeApi, rm);
+  brain.orderBook = new OrderBook();
+  brain.farmManager = new FarmManager();
+  brain.tts = { enabled: false };
+
+  let presented = null;
+  brain._presentResponse = (char, response, recipientId, recipientName) => {
+    presented = { charId: char.id, response, recipientId, recipientName };
+  };
+
+  // _pendingAnnounceMessage が空でも定型文を使わず LLM へ問い合わせること
+  alice._pendingAnnounceMessage = null;
+  brain._announceGather(alice, "wood", 1);
+  await new Promise(r => setTimeout(r, 30));
+
+  assert.equal(promptsSent.length, 1);
+  assert.match(promptsSent[0].prompt, /木材を1個採集した/);
+  assert.equal(presented.response, `@${presented.recipientName} いい木材が見つかったよ！あとで取引板で勝負しようね。`);
+
+  // プレイヤーの取引約定に対するAIリアクションもLLM生成になること
+  brain.reactToTradeExecuted(alice, player, {
+    sellType: "wood",
+    sellAmount: 1,
+    buyType: "coin",
+    buyAmount: 3,
+    resourceType: "wood",
+    resourceQty: 1,
+    coinQty: 3,
+  });
+  await new Promise(r => setTimeout(r, 30));
+  assert.equal(promptsSent.length, 2);
+  assert.match(promptsSent[1].prompt, /売却できた/);
+});

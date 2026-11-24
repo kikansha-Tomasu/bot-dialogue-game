@@ -91,19 +91,28 @@ class Game {
     };
 
     this.orderBook.onExecute = (order, executor) => {
-      const msg = `@${order.posterName} ${RESOURCE_EMOJI[order.buyType]}×${order.buyAmount}と${RESOURCE_EMOJI[order.sellType]}×${order.sellAmount}を交換したよ！ありがとう！`;
+      const isBuyOrder = order.sellType === "coin";
+      const resType = order.resourceType || (isBuyOrder ? order.buyType : order.sellType);
+      const resQty = order.resourceQty || (isBuyOrder ? order.buyAmount : order.sellAmount);
+      const coinQty = order.coinQty || (isBuyOrder ? order.sellAmount : order.buyAmount);
+      const buyerName = isBuyOrder ? order.posterName : executor.name;
+      const sellerName = isBuyOrder ? executor.name : order.posterName;
       this.chatManager.addMessage({
-        senderId: executor.id,
-        senderName: executor.name,
-        senderColor: executor.id === "player" ? C.player : executor.color,
-        recipientId: order.posterId,
-        recipientName: order.posterName,
-        text: msg,
-        isAI: executor.id !== "player",
+        senderId: "system",
+        senderName: "取引成立",
+        senderColor: "#7A5600",
+        recipientId: "all",
+        recipientName: "全員",
+        text: `🤝 ${buyerName} が ${sellerName} から ${RESOURCE_EMOJI[resType]}${RESOURCE_LABEL[resType]}×${resQty} を 🪙${coinQty} で購入`,
+        isAI: false,
       });
       // プレイヤーが関与した約定回数のみ記録（固定コインボーナスなし）
       if (executor.id === "player" || order.posterId === "player") {
         this.progression.onPlayerTradeExecuted();
+      }
+      // プレイヤーがAIの注文を成立させた場合、相手AIがLLMで反応コメントを返す
+      if (executor.id === "player" && order.posterRef && !order.posterRef.isPlayer) {
+        this.aiBrain.reactToTradeExecuted(order.posterRef, this.player, order);
       }
       syncLivePanels();
     };

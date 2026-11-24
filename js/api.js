@@ -99,7 +99,7 @@ class HuggingFaceClient {
       return;
     }
     try {
-      this._worker = new Worker("js/hf-browser-worker.js?v=gh12", { type: "module" });
+      this._worker = new Worker("js/hf-browser-worker.js?v=gh13", { type: "module" });
       this._workerLoading = true;
       this._workerError = "";
       this._workerStage = "connecting";
@@ -182,7 +182,7 @@ class HuggingFaceClient {
     }
   }
 
-  _runBrowserWorker(messages, maxNewTokens = 64, temperature = 0.72) {
+  _runBrowserWorker(messages, maxNewTokens = 64, temperature = 0.55, options = {}) {
     return new Promise((resolve, reject) => {
       if (!this._worker) this._initBrowserWorker();
       if (!this._worker) {
@@ -209,6 +209,8 @@ class HuggingFaceClient {
         messages,
         maxNewTokens,
         temperature,
+        doSample: options.doSample !== undefined ? Boolean(options.doSample) : temperature > 0.05,
+        allowStructuredPlan: Boolean(options.allowStructuredPlan),
       });
     });
   }
@@ -279,6 +281,38 @@ class HuggingFaceClient {
     return str;
   }
 
+  // WebGPU FP16崩壊やソフトマックス異常による文字化け・断片トークン列を検出
+  static isCorruptedText(rawText) {
+    const text = String(rawText ?? "").trim();
+    if (!text) return true;
+    // U+FFFD置換文字・結合発音記号・制御文字
+    if (/[\uFFFD\u0300-\u036F\u0000-\u0008\u000B\u000C\u000E-\u001F]/.test(text)) return true;
+    // アクセント付きラテン文字（é, í, ǎ, ó 等の多言語崩壊トークン）
+    if (/[\u00C0-\u024F\u1E00-\u1EFF]/.test(text)) return true;
+
+    const body = text
+      .replace(/[@＠][A-Za-z0-9_]+/g, "")
+      .replace(/[\u{1F000}-\u{1FAFF}\u2600-\u27BF\uFE0F]/gu, "")
+      .trim();
+    if (!body) return true;
+
+    // 空白区切りの1〜2文字断片トークンが多発する典型的な崩壊パターン
+    const tokens = body.split(/\s+/).filter(Boolean);
+    if (tokens.length >= 6) {
+      const tinyTokens = tokens.filter(t => t.length <= 2).length;
+      if (tinyTokens / tokens.length >= 0.5) return true;
+    }
+
+    // 自然な日本語として最低限のひらがな/カタカナ/漢字を含み、英字過多でないこと
+    const jpChars = (body.match(/[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]/g) || []).length;
+    const kanaChars = (body.match(/[\u3040-\u309F\u30A0-\u30FF]/g) || []).length;
+    const alphaChars = (body.match(/[A-Za-z]/g) || []).length;
+    if (jpChars < 3 || kanaChars < 2) return true;
+    if (alphaChars > jpChars) return true;
+
+    return false;
+  }
+
   static cleanDialogueResponse(rawText, targetName) {
     let text = HuggingFaceClient.stripReasoningTags(rawText);
     text = text.replace(/```[\s\S]*?```/g, "").trim();
@@ -302,6 +336,7 @@ class HuggingFaceClient {
     }
 
     text = HuggingFaceClient.truncateToSentences(text, 2);
+    if (HuggingFaceClient.isCorruptedText(text)) return "";
     return text;
   }
 
@@ -313,6 +348,7 @@ class HuggingFaceClient {
     msg = msg.replace(/^[@＠]\w+\s*/, "").trim();
     if (!msg) return null;
     msg = HuggingFaceClient.truncateToSentences(msg, 2);
+    if (HuggingFaceClient.isCorruptedText(msg)) return null;
     return targetName ? `@${targetName} ${msg}` : msg;
   }
 
@@ -361,10 +397,10 @@ class HuggingFaceClient {
         const browserMsgs = [
           {
             role: "system",
-            content: `${character.personality}\n重要: 自分をAIと呼ばずキャラクター本人として1〜2文の自然な日本語で話してください。`,
+            content: `${character.personality}\n重要: 自分をAIと呼ばず、必ず自然な日本語のみで1〜2文話してください。英語や中国語や記号の羅列は禁止です。`,
           },
           ...fewShot,
-          ...character.conversationHistory.slice(-4),
+          ...character.conversationHistory.slice(-2),
           { role: "user", content: promptWithHint },
         ];
         // ユーザーが任意でブラウザに HF_TOKEN を保存していればクラウドも優先試行
@@ -373,9 +409,15 @@ class HuggingFaceClient {
           rawText = cloudReply;
           character.lastUsedModel = "Qwen/Qwen2.5-7B-Instruct";
         } else {
-          const res = await this._runBrowserWorker(browserMsgs, 56, 0.72);
+          const res = await this._runBrowserWorker(browserMsgs, 64, 0.55, { doSample: true });
           rawText = res.content;
           if (res.modelId) character.lastUsedModel = res.modelId;
+          // 崩れた出力が出た場合は決定論的デコード(greedy)で1回再試行
+          if (!HuggingFaceClient.cleanDialogueResponse(rawText, targetName)) {
+            const retry = await this._runBrowserWorker(browserMsgs, 56, 0, { doSample: false });
+            rawText = retry.content;
+            if (retry.modelId) character.lastUsedModel = retry.modelId;
+          }
         }
         this.hfAvailable = true;
         this.lmAvailable = true;
@@ -513,13 +555,16 @@ PLAN:の直後は必ず gather / farm / trade / build / chat のいずれかの�
           const compactMsgs = [
             {
               role: "system",
-              content: "次の行動を PLAN: gather / farm / trade / build / chat の形式で3行だけ出力してください。",
+              content: "次の行動を PLAN: gather / farm / trade / build / chat と対象パラメータの2行だけで出力してください。",
             },
-            { role: "user", content: "状況: コイン10, 木材2\n次の行動:" },
-            { role: "assistant", content: `PLAN: farm\nCROP: carrot\nMESSAGE: @${nearestName} 畑にニンジンを植えて資産を増やすよ！` },
+            { role: "user", content: "状況: コイン50, 木材2\n次の行動:" },
+            { role: "assistant", content: "PLAN: farm\nCROP: carrot" },
             { role: "user", content: `${context.slice(0, 420)}\n次の行動:` },
           ];
-          const res = await this._runBrowserWorker(compactMsgs, 56, 0.7);
+          const res = await this._runBrowserWorker(compactMsgs, 32, 0.45, {
+            doSample: true,
+            allowStructuredPlan: true,
+          });
           text = res.content;
         } catch (err) {
           console.warn(`[HuggingFace Browser] callAIForMasterAction skipped: ${err.message}`);

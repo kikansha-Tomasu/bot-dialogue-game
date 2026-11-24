@@ -9,7 +9,7 @@ AIキャラクターが2Dマップ上を自由に動き回り、プレイヤー�
 ## 特徴
 
 - **サーバー不要（GitHub Pages）でそのまま稼働**：
-  - 静的サイトを開くだけで、ブラウザ内蔵の **Hugging Face Transformers.js v3（WebGPU / WASM）** が Web Worker 上で自動起動し、無料・APIトークン不要で **Hugging Face ONNX モデル**（`onnx-community/Qwen2.5-0.5B-Instruct`・WebGPU `q4f16` / WASM `q8`）を動かします（モデルはブラウザにキャッシュされます）。
+  - 静的サイトを開くだけで、ブラウザ内蔵の **Hugging Face Transformers.js v3（WebGPU / WASM）** が Web Worker 上で自動起動し、無料・APIトークン不要で **Hugging Face ONNX モデル**（`onnx-community/Qwen2.5-0.5B-Instruct`・WebGPU `q4` [FP32演算] / WASM `q8` 自動セルフテスト切替）を動かします（モデルはブラウザにキャッシュされます）。
   - 読み上げ音声もブラウザ内蔵の **ZEN-TTS v1.4.0（44.1kHz NSF デコーダ＋5感情スタイル連続制御：`marine`・`hashiro`・`kikka`）** が専用 Web Worker（WebGPU / CPU WASM SIMD 自動切替）で動作し、セリフの内容や語尾に応じて感情・抑揚を動的に変化させた自然な日本語音声を合成します（Cache API キャッシュ対応）。
 - **ローカル高音質・高性能モード（`server.py` / `起動.bat`）**：
   - `http://127.0.0.1:8765` で起動すると自動的にローカルサーバーへ接続し、**Google Gemma 3 4B Instruct**（`unsloth/gemma-3-4b-it-GGUF`, `Q4_K_M`）＋ **Style-Bert-VITS2 JP-Extra**（あみたろ / `jvnv-M1-jp` / `jvnv-F2-jp`）で自然な日本語会話と高品質な音声合成が完全無料・回数無制限で楽しめます。
@@ -43,7 +43,7 @@ AIキャラクターが2Dマップ上を自由に動き回り、プレイヤー�
 
 | 動作モード | LLM（会話・行動判断） | 音声（TTS） | サーバー / 課金 |
 |---|---|---|---|
-| **GitHub Pages（サーバー不要）** | `onnx-community/Qwen2.5-0.5B-Instruct`（WebGPU `q4f16` / WASM `q8`） | **ZEN-TTS v1.4.0**（44.1kHz 感情表現対応・WebGPU / WASM SIMD）<br>`marine`（Alice）/ `hashiro`（Bob）/ `kikka`（Carol） | **サーバー不要・無料** |
+| **GitHub Pages（サーバー不要）** | `onnx-community/Qwen2.5-0.5B-Instruct`（WebGPU `q4` [FP32演算] / WASM `q8` 自動切替） | **ZEN-TTS v1.4.0**（44.1kHz 感情表現対応・WebGPU / WASM SIMD）<br>`marine`（Alice）/ `hashiro`（Bob）/ `kikka`（Carol） | **サーバー不要・無料** |
 | **ローカルサーバー（`server.py`）** | `unsloth/gemma-3-4b-it-GGUF`（Google Gemma 3 4B `Q4_K_M`） | `litagin/sbv2_amitaro`（Alice）<br>`litagin/style_bert_vits2_jvnv`（Bob `M1` / Carol `F2`） | ローカル無料・API枠不要 |
 
 ---

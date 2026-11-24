@@ -32,7 +32,7 @@ class AIBrain {
         const got = node.gather(1);
         if (got > 0) {
           inventoryAdd(c.inventory, node.type, got);
-          this._announceGather(c, node.type);
+          this._announceGather(c, node.type, got);
           if (this.onStateChange) this.onStateChange();
         }
         c.gatherTarget = null;
@@ -255,15 +255,88 @@ class AIBrain {
       : ["wood", "stone", "herb", "fish"];
   }
 
+  _canUseLLMForSpeech() {
+    if (!this.apiClient || typeof this.apiClient.callAI !== "function") return false;
+    if (this.apiClient.mode === "browser-hf") {
+      return Boolean(this.apiClient._workerReady || this.apiClient._getSavedBrowserToken?.());
+    }
+    if (this.apiClient.mode === "local-server") {
+      return this.apiClient.hfAvailable !== false;
+    }
+    // テスト用のカスタムクライアント（mode未設定・callAI実装あり）
+    return !("mode" in this.apiClient) || this.apiClient.hfAvailable === true;
+  }
+
+  // 採集・農業・料理・取引・建築・街発展などのリアクションを定型文ではなくLLMに考えさせる
+  async _speakActionViaLLM(char, target, actionFact, fallbackText, preGeneratedMsg = null) {
+    if (!char || !target) return;
+
+    const sanitizedPre = LMStudioClient.sanitizeAnnounceMessage(preGeneratedMsg, target.name);
+    if (sanitizedPre) {
+      this._presentResponse(char, sanitizedPre, target.id, target.name, null);
+      return;
+    }
+
+    if (!this._canUseLLMForSpeech() || this.isProcessing[char.id]) {
+      this._presentResponse(char, fallbackText, target.id, target.name, null);
+      return;
+    }
+
+    this.isProcessing[char.id] = true;
+    char.isTalking = true;
+    char.isTyping = true;
+    char.talkingTo = target;
+    if (typeof char.faceToward === "function") char.faceToward(target);
+    const thinkingTypingId = this.chatManager.addTypingIndicator(char.name, char.color, target.name);
+    char._activeTypingId = thinkingTypingId;
+
+    try {
+      const invSummary = getInventorySummary(char.inventory) || "なし";
+      const rankInfo = this._getCharRank(char);
+      const prompt =
+        `【いま起きた出来事】${actionFact}\n` +
+        `【現在の状況】持ち物: ${invSummary} ／ 総資産ランキング${rankInfo.rank}位（${rankInfo.total.toFixed(1)}🪙）\n` +
+        `この出来事について、@${target.name} に向かって${char.name}らしい自然な日本語で1〜2文だけ感想や次の狙いを話しかけてください。定型文ではなく今の状況に合わせた言葉にしてください。`;
+
+      const response = await this.apiClient.callAI(
+        char,
+        prompt,
+        target.name,
+        `(${actionFact})`
+      );
+      if (!this.llmAvailable) {
+        this.llmAvailable = true;
+        if (this.onStateChange) this.onStateChange();
+      }
+      this._presentResponse(char, response, target.id, target.name, null);
+    } catch (err) {
+      console.warn(`[AIBrain] ${char.name} action speech fallback:`, err.message);
+      this._presentResponse(char, fallbackText, target.id, target.name, null);
+    } finally {
+      this.isProcessing[char.id] = false;
+      this._drainPendingPlayerMessage(char);
+    }
+  }
+
+  // プレイヤーがAIの取引板注文を成立させたときのLLMリアクション
+  reactToTradeExecuted(aiChar, counterparty, order) {
+    if (!aiChar || !counterparty || !order) return;
+    const isBuyOrder = order.sellType === "coin";
+    const resType = order.resourceType || (isBuyOrder ? order.buyType : order.sellType);
+    const resQty = order.resourceQty || (isBuyOrder ? order.buyAmount : order.sellAmount);
+    const coinQty = order.coinQty || (isBuyOrder ? order.sellAmount : order.buyAmount);
+    const itemName = `${RESOURCE_EMOJI[resType] || ""}${RESOURCE_LABEL[resType] || resType}`;
+    const actionFact = isBuyOrder
+      ? `${counterparty.name}があなたの買い注文に応じてくれ、🪙${coinQty}で${itemName}×${resQty}を購入できた`
+      : `${counterparty.name}があなたの売り注文を買ってくれ、${itemName}×${resQty}を🪙${coinQty}で売却できた`;
+    const fallback = `@${counterparty.name} ${itemName}×${resQty}の取引ありがとう！`;
+    this._speakActionViaLLM(aiChar, counterparty, actionFact, fallback, null);
+  }
+
   _executePlanTrade(char, planText) {
     const ALL_ITEMS = this._getTradableItemTypes();
     const decision = planText ? this._parseTradeDecision(planText) : null;
     const target = this._nearestOther(char);
-
-    const formatAnnounce = (rawMsg, fallbackText) => {
-      const sanitized = LMStudioClient.sanitizeAnnounceMessage(rawMsg, target.name);
-      return sanitized || fallbackText;
-    };
 
     if (decision) {
       const { action, resource, amount, coins } = decision;
@@ -273,11 +346,11 @@ class AIBrain {
       if (action === "execute") {
         const executed = this.orderBook.tryAIExecute(char, resource);
         if (executed) {
-          const text = formatAnnounce(
-            customMsg,
-            `@${executed.posterName} 注文を成立させたよ！${RESOURCE_EMOJI[executed.buyType]}×${executed.buyAmount}と${RESOURCE_EMOJI[executed.sellType]}×${executed.sellAmount}を交換したね`
-          );
-          this._presentResponse(char, text, executed.posterId, executed.posterName, null);
+          const posterTarget = executed.posterRef || target;
+          const itemLabel = `${RESOURCE_EMOJI[executed.resourceType] || ""}${RESOURCE_LABEL[executed.resourceType] || executed.resourceType}`;
+          const actionFact = `${executed.posterName}の取引板注文を成立させ、${itemLabel}×${executed.resourceQty}と🪙${executed.coinQty}を交換した`;
+          const fallback = `@${executed.posterName} ${itemLabel}×${executed.resourceQty}の取引が成立したよ！`;
+          this._speakActionViaLLM(char, posterTarget, actionFact, fallback, customMsg);
           return;
         }
       } else if (action === "skip") {
@@ -289,11 +362,10 @@ class AIBrain {
           const order = this.orderBook.postOrder(char, resource, sellAmt, "coin", coins);
           if (order) {
             if (!order._wasFullyMatched) {
-              const text = formatAnnounce(
-                customMsg,
-                `@${target.name} ${RESOURCE_EMOJI[resource]}×${sellAmt}を🪙${coins}で売りに出したよ！`
-              );
-              this._presentResponse(char, text, target.id, target.name, null);
+              const itemLabel = `${RESOURCE_EMOJI[resource]}${RESOURCE_LABEL[resource]}`;
+              const actionFact = `取引板に${itemLabel}×${sellAmt}を🪙${coins}で売り注文を出した`;
+              const fallback = `@${target.name} ${itemLabel}×${sellAmt}を🪙${coins}で売りに出したよ！`;
+              this._speakActionViaLLM(char, target, actionFact, fallback, customMsg);
             }
             return;
           }
@@ -305,11 +377,10 @@ class AIBrain {
           const order = this.orderBook.postOrder(char, "coin", spendCoin, resource, amount);
           if (order) {
             if (!order._wasFullyMatched) {
-              const text = formatAnnounce(
-                customMsg,
-                `@${target.name} 🪙${spendCoin}で${RESOURCE_EMOJI[resource]}×${amount}を買いたいな！注文を出したよ`
-              );
-              this._presentResponse(char, text, target.id, target.name, null);
+              const itemLabel = `${RESOURCE_EMOJI[resource]}${RESOURCE_LABEL[resource]}`;
+              const actionFact = `取引板に🪙${spendCoin}で${itemLabel}×${amount}の買い注文を出した`;
+              const fallback = `@${target.name} 🪙${spendCoin}で${itemLabel}×${amount}を買いたいな！注文を出したよ`;
+              this._speakActionViaLLM(char, target, actionFact, fallback, customMsg);
             }
             return;
           }
@@ -321,8 +392,11 @@ class AIBrain {
     if (Math.random() < 0.65) {
       const executed = this.orderBook.tryAIExecute(char);
       if (executed) {
-        const text = `@${executed.posterName} ${executed.posterName}の注文を成立させたよ！${RESOURCE_EMOJI[executed.buyType]}×${executed.buyAmount}と${RESOURCE_EMOJI[executed.sellType]}×${executed.sellAmount}を交換したね`;
-        this._presentResponse(char, text, executed.posterId, executed.posterName, null);
+        const posterTarget = executed.posterRef || target;
+        const itemLabel = `${RESOURCE_EMOJI[executed.resourceType] || ""}${RESOURCE_LABEL[executed.resourceType] || executed.resourceType}`;
+        const actionFact = `${executed.posterName}の取引板注文を成立させ、${itemLabel}×${executed.resourceQty}と🪙${executed.coinQty}を交換した`;
+        const fallback = `@${executed.posterName} ${itemLabel}×${executed.resourceQty}の注文を成立させたよ！`;
+        this._speakActionViaLLM(char, posterTarget, actionFact, fallback, null);
         return;
       }
     }
@@ -374,8 +448,16 @@ class AIBrain {
     const order = this.orderBook.postOrder(char, sellType, sellAmount, buyType, buyAmount);
     if (!order || order._wasFullyMatched) return;
 
-    const text = `@${target.name} ${RESOURCE_EMOJI[sellType]}×${sellAmount}と${RESOURCE_EMOJI[buyType]}×${buyAmount}を交換したい！板に注文を出したよ`;
-    this._presentResponse(char, text, target.id, target.name, null);
+    const isBuy = sellType === "coin";
+    const itemType = isBuy ? buyType : sellType;
+    const itemQty = isBuy ? buyAmount : sellAmount;
+    const coinQty = isBuy ? sellAmount : buyAmount;
+    const itemLabel = `${RESOURCE_EMOJI[itemType]}${RESOURCE_LABEL[itemType]}`;
+    const actionFact = isBuy
+      ? `取引板に🪙${coinQty}で${itemLabel}×${itemQty}の買い注文を出した`
+      : `取引板に${itemLabel}×${itemQty}を🪙${coinQty}で売り注文を出した`;
+    const fallback = `@${target.name} ${itemLabel}×${itemQty}を🪙${coinQty}で取引板に出したよ！`;
+    this._speakActionViaLLM(char, target, actionFact, fallback, null);
   }
 
   _executePlanBuild(char, planText) {
@@ -423,9 +505,11 @@ class AIBrain {
     const r = BUILDING_RECIPES[chosen];
     const ben = BUILDING_BENEFITS[chosen];
     const msgMatch = planText?.match(/MESSAGE\s*[:：]\s*(.+)/i);
-    const fallback = `@${target.name} ${r.emoji}${r.name}を建てたよ！${ben ? RESOURCE_EMOJI[ben.generates] + "が生産されるね" : ""}`;
-    const text = LMStudioClient.sanitizeAnnounceMessage(msgMatch ? msgMatch[1] : null, target.name) || fallback;
-    this._presentResponse(char, text, target.id, target.name, null);
+    const customMsg = msgMatch ? msgMatch[1].trim() : null;
+    const prodNote = ben ? `（${RESOURCE_EMOJI[ben.generates]}${RESOURCE_LABEL[ben.generates]}を自動生産）` : "";
+    const actionFact = `マップ上に${r.emoji}${r.name}を建築した${prodNote}`;
+    const fallback = `@${target.name} ${r.emoji}${r.name}を建てたよ！`;
+    this._speakActionViaLLM(char, target, actionFact, fallback, customMsg);
   }
 
   _tryAIListItem(char, itemType) {
@@ -450,23 +534,20 @@ class AIBrain {
     if (harvested.length > 0) {
       const cropNames = harvested.map(r => `${r.crop.emoji}${r.crop.name}`).join("・");
       const cooked = this.farmManager.tryAICook(char, this.orderBook?.priceHistory);
-      let listedNote = "";
+      let actionFact = `畑から${cropNames}を収穫した`;
       if (cooked) {
         const listed = this._tryAIListItem(char, cooked.dishId);
-        listedNote = listed && !listed._wasFullyMatched
-          ? `さらに${cooked.recipe.emoji}${cooked.recipe.name}を作って🪙${listed.buyAmount}で取引板に出品したよ！`
-          : `さらに${cooked.recipe.emoji}${cooked.recipe.name}を作ったよ！`;
+        actionFact += listed && !listed._wasFullyMatched
+          ? `。そのまま${cooked.recipe.emoji}${cooked.recipe.name}を調理し、取引板に🪙${listed.buyAmount}で売り注文を出した`
+          : `。そのまま${cooked.recipe.emoji}${cooked.recipe.name}を調理した`;
       } else {
         const listed = this._tryAIListItem(char, harvested[0].crop?.id);
         if (listed && !listed._wasFullyMatched) {
-          listedNote = `さっそく🪙${listed.buyAmount}で取引板に売りに出したよ！`;
-        } else {
-          listedNote = "取引板で売ってコインを増やすよ！";
+          actionFact += `。収穫物を取引板に🪙${listed.buyAmount}で売り注文を出した`;
         }
       }
-      const fallback = `@${target.name} 畑から${cropNames}を収穫！${listedNote}`;
-      const text = LMStudioClient.sanitizeAnnounceMessage(customMsg, target.name) || fallback;
-      this._presentResponse(char, text, target.id, target.name, null);
+      const fallback = `@${target.name} ${cropNames}を収穫したよ！取引板で売ってみよう。`;
+      this._speakActionViaLLM(char, target, actionFact, fallback, customMsg);
       return;
     }
 
@@ -474,12 +555,11 @@ class AIBrain {
     const cookedOnly = this.farmManager.tryAICook(char, this.orderBook?.priceHistory);
     if (cookedOnly) {
       const listed = this._tryAIListItem(char, cookedOnly.dishId);
-      const listHint = listed && !listed._wasFullyMatched
-        ? `🪙${listed.buyAmount}で取引板に出したから見てみてね！`
-        : "取引板で売ってコインを狙うよ！";
-      const fallback = `@${target.name} 収穫した食材で${cookedOnly.recipe.emoji}${cookedOnly.recipe.name}を作ったよ！${listHint}`;
-      const text = LMStudioClient.sanitizeAnnounceMessage(customMsg, target.name) || fallback;
-      this._presentResponse(char, text, target.id, target.name, null);
+      const actionFact = listed && !listed._wasFullyMatched
+        ? `収穫した食材で${cookedOnly.recipe.emoji}${cookedOnly.recipe.name}を調理し、取引板に🪙${listed.buyAmount}で売り注文を出した`
+        : `収穫した食材で${cookedOnly.recipe.emoji}${cookedOnly.recipe.name}を調理した`;
+      const fallback = `@${target.name} ${cookedOnly.recipe.emoji}${cookedOnly.recipe.name}を作ったよ！`;
+      this._speakActionViaLLM(char, target, actionFact, fallback, customMsg);
       return;
     }
 
@@ -513,9 +593,9 @@ class AIBrain {
     const planted = this.farmManager.plantCrop(char, chosenCrop.id, null, townLv);
     if (!planted.ok) return;
 
-    const fallback = `@${target.name} 農地に${chosenCrop.emoji}${chosenCrop.name}の種をまいたよ！育てて取引板で売るからね！`;
-    const text = LMStudioClient.sanitizeAnnounceMessage(customMsg, target.name) || fallback;
-    this._presentResponse(char, text, target.id, target.name, null);
+    const actionFact = `農地に${chosenCrop.emoji}${chosenCrop.name}の種をまいた（収穫後に取引板で売る予定）`;
+    const fallback = `@${target.name} ${chosenCrop.emoji}${chosenCrop.name}の種をまいたよ！`;
+    this._speakActionViaLLM(char, target, actionFact, fallback, customMsg);
   }
 
   _fallbackAction(c) {
@@ -742,16 +822,11 @@ class AIBrain {
       ? [...this.aiChars]
       : [this._nearestOther(player) || this.aiChars[0]];
 
-    const linesByChar = {
-      alice: `街を Lv.${spec.level}「${spec.name}」に発展させたんだね！でもライバルとして総資産1位の座は私が農業と取引で奪ってみせるよ！`,
-      bob:   `見事な投資だ…街が「${spec.name}」へと姿を変えたね。だが富の勝負はこれからさ、私の畑の実りで追い抜いてみせよう。`,
-      carol: `すごーい！街が Lv.${spec.level}「${spec.name}」になったね！でも私も負けないよ〜、とびきりの作物を育てて逆転するからね！`,
-    };
-
     celebrators.forEach((char, idx) => {
-      const body = linesByChar[char.id] || `街が Lv.${spec.level}「${spec.name}」に発展したね！でも資産競争では負けないよ！`;
+      const actionFact = `${player.name}が街をLv.${spec.level}「${spec.name}」へ発展させた（${spec.visualSummary}）`;
+      const fallback = `@${player.name} 街がLv.${spec.level}「${spec.name}」に発展したね！でも資産勝負では負けないよ！`;
       setTimeout(() => {
-        this._presentResponse(char, `@${player.name} ${body}`, player.id, player.name, null);
+        this._speakActionViaLLM(char, player, actionFact, fallback, null);
       }, idx * 1400);
     });
   }
@@ -802,21 +877,16 @@ class AIBrain {
     return `@${targetName} ${body}`;
   }
 
-  _announceGather(char, type) {
+  _announceGather(char, type, got = 1) {
     const target = this._nearestOther(char);
-    const label = RESOURCE_LABEL[type];
-    const emoji = RESOURCE_EMOJI[type];
-    const summary = getInventorySummary(char.inventory) || "まだ空";
-    const lines = [
-      `${emoji}${label}を採集したよ！持ち物: ${summary}`,
-      `${emoji}${label}をゲット！次は何を集めようかな？`,
-      `${emoji}${label}を見つけたよ！今の所持品: ${summary}`,
-    ];
-    const fallback = `@${target.name} ` + lines[Math.floor(Math.random() * lines.length)];
+    if (!target) return;
+    const label = RESOURCE_LABEL[type] || type;
+    const emoji = RESOURCE_EMOJI[type] || "";
     const pending = char._pendingAnnounceMessage;
     char._pendingAnnounceMessage = null;
-    const text = LMStudioClient.sanitizeAnnounceMessage(pending, target.name) || fallback;
-    this._presentResponse(char, text, target.id, target.name, null);
+    const actionFact = `${emoji}${label}を${got}個採集した`;
+    const fallback = `@${target.name} ${emoji}${label}を${got}個採集したよ！`;
+    this._speakActionViaLLM(char, target, actionFact, fallback, pending);
   }
 
   _resetTimer(id) {
