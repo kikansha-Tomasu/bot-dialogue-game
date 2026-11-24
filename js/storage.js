@@ -86,6 +86,18 @@ class SaveManager {
         inventory: { ...c.inventory },
         spriteFolder: c.spriteFolder,
         conversationHistory: (c.conversationHistory || []).slice(-10),
+        strategy: c.strategy ? {
+          archetype: c.strategy.archetype,
+          styleLabel: c.strategy.styleLabel,
+          goal: c.strategy.goal,
+          focusAction: c.strategy.focusAction,
+          targetItem: c.strategy.targetItem,
+          targetRival: c.strategy.targetRival,
+          turnCount: c.strategy.turnCount || 0,
+          revisionCount: c.strategy.revisionCount || 0,
+          lastRank: c.strategy.lastRank || 0,
+          lastUpdatedAt: c.strategy.lastUpdatedAt || 0,
+        } : null,
       })),
       buildings: (game.buildingManager?.placed || []).map(b => ({
         type: b.type,
@@ -140,6 +152,23 @@ class SaveManager {
         }
         if (Array.isArray(sc.conversationHistory)) {
           target.conversationHistory = sc.conversationHistory.slice(-10);
+        }
+        if (sc.strategy && typeof sc.strategy === "object" && !target.isPlayer) {
+          const validFocus = ["gather", "farm", "trade", "build", "chat"];
+          const cur = target.strategy || {};
+          target.strategy = {
+            ...cur,
+            archetype: typeof sc.strategy.archetype === "string" ? sc.strategy.archetype : (cur.archetype || "balanced"),
+            styleLabel: typeof sc.strategy.styleLabel === "string" ? sc.strategy.styleLabel : (cur.styleLabel || "バランス型"),
+            goal: typeof sc.strategy.goal === "string" && sc.strategy.goal.trim() ? sc.strategy.goal.trim().slice(0, 60) : (cur.goal || ""),
+            focusAction: validFocus.includes(sc.strategy.focusAction) ? sc.strategy.focusAction : (cur.focusAction || "gather"),
+            targetItem: typeof sc.strategy.targetItem === "string" && allItemKeys.includes(sc.strategy.targetItem) ? sc.strategy.targetItem : (cur.targetItem || "wood"),
+            targetRival: typeof sc.strategy.targetRival === "string" ? sc.strategy.targetRival : (cur.targetRival || "Player"),
+            turnCount: Math.max(0, Math.floor(Number(sc.strategy.turnCount) || 0)),
+            revisionCount: Math.max(0, Math.floor(Number(sc.strategy.revisionCount) || 0)),
+            lastRank: Math.max(0, Math.floor(Number(sc.strategy.lastRank) || 0)),
+            lastUpdatedAt: Number(sc.strategy.lastUpdatedAt) || 0,
+          };
         }
       }
     }

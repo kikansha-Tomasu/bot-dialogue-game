@@ -1026,3 +1026,112 @@ test("LLM Output Quality & Action Speech: rejects garbled WebGPU tokens, removes
   assert.equal(promptsSent.length, 2);
   assert.match(promptsSent[1].prompt, /売却できた/);
 });
+
+test("Character Strategy System: distinct archetypes, compact lossless context, LLM strategy revision, tactical execution, and save persistence", async () => {
+  const chars = buildCharacters(800, 600);
+  const alice = chars.find(c => c.id === "alice");
+  const bob = chars.find(c => c.id === "bob");
+  const carol = chars.find(c => c.id === "carol");
+  const player = chars.find(c => c.id === "player");
+
+  // 1. 3キャラが異なる戦法・長期戦略メモリを持ち、プレイヤーには不要な戦略オブジェクトが無いこと
+  assert.equal(alice.strategy.archetype, "market_arbitrage");
+  assert.equal(alice.strategy.styleLabel, "相場転売型");
+  assert.equal(bob.strategy.archetype, "infrastructure_builder");
+  assert.equal(bob.strategy.styleLabel, "建築投資型");
+  assert.equal(carol.strategy.archetype, "culinary_craft");
+  assert.equal(carol.strategy.styleLabel, "農業料理型");
+  assert.equal(player.strategy, null);
+
+  const cm = new ChatManager();
+  const rm = new ResourceManager();
+  rm.init(800, 600);
+  const ob = new OrderBook();
+  const bm = new BuildingManager(player);
+  const fm = new FarmManager();
+
+  // 板注文と価格履歴を配置
+  player.inventory.carrot = 2;
+  ob.postOrder(player, "carrot", 1, "coin", 5);
+  ob.priceHistory.wood = [3.5];
+
+  const strategyCalls = [];
+  const fakeApi = {
+    mode: "browser-hf",
+    _workerReady: true,
+    async callAIForStrategy(char, compactSummary) {
+      strategyCalls.push({ charId: char.id, compactSummary });
+      return "FOCUS: trade\nTARGET_ITEM: carrot\nGOAL: 割安なニンジンを仕入れて高値転売を狙う";
+    },
+    async callAI(_char, _prompt, targetName) {
+      return `@${targetName} 戦略どおりに進めているよ！`;
+    },
+  };
+
+  const brain = new AIBrain(chars, cm, fakeApi, rm);
+  brain.orderBook = ob;
+  brain.buildingManager = bm;
+  brain.farmManager = fm;
+  brain.tts = { enabled: false };
+
+  // 2. 圧縮コンテキストが 0.5B モデル向けにコンパクトかつ取引板・相場・戦略を欠落させずに含むこと
+  const compact = brain._buildCompactStrategicContext(alice);
+  assert.ok(compact.length < 360, `Compact context should stay concise, got ${compact.length} chars`);
+  assert.match(compact, /相場転売型/);
+  assert.match(compact, /取引板:.*Player売/);
+  assert.match(compact, /相場:.*🪵3\.5/);
+
+  // 3. _maybeReviseStrategy が LLM の戦略出力をパース・保存し、revisionCount を更新すること
+  await brain._maybeReviseStrategy(alice, true);
+  assert.equal(strategyCalls.length, 1);
+  assert.equal(alice.strategy.focusAction, "trade");
+  assert.equal(alice.strategy.targetItem, "carrot");
+  assert.equal(alice.strategy.goal, "割安なニンジンを仕入れて高値転売を狙う");
+  assert.equal(alice.strategy.revisionCount, 1);
+
+  // 4. 文字化けした GOAL は拒否されること
+  assert.equal(brain._parseStrategyPlan("GOAL: eloído あ っé \uFFFD ǎ"), null);
+
+  // 5. 戦法差の検証：Carol は作物を Bob より高く評価し、Bob は建築可能なら即建築を選ぶこと
+  assert.ok(ob.getAIValuation("carrot", carol) > ob.getAIValuation("carrot", bob));
+  bob.inventory.herb = 3;
+  brain._fallbackAction(bob);
+  assert.equal(bm.getBuildingsByOwner("bob").length, 1);
+
+  // 6. SaveManager が各キャラの更新済み長期戦略を保存・復元できること
+  const mem = new Map();
+  const fakeStorage = {
+    getItem: k => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => mem.set(k, v),
+    removeItem: k => mem.delete(k),
+  };
+  const sm = new SaveManager(fakeStorage);
+  sm.saveImmediate(SaveManager.captureGameState({
+    canvas: { width: 800, height: 600 },
+    mapRenderer: { getCurrentMapId: () => "central_plaza" },
+    characters: chars,
+    player,
+    buildingManager: bm,
+    orderBook: ob,
+    progression: new ProgressionManager(player),
+    farmManager: fm,
+  }));
+
+  const chars2 = buildCharacters(800, 600);
+  const p2 = chars2.find(c => c.id === "player");
+  SaveManager.applyGameState({
+    canvas: { width: 800, height: 600 },
+    characters: chars2,
+    player: p2,
+    buildingManager: new BuildingManager(p2),
+    orderBook: new OrderBook(),
+    progression: new ProgressionManager(p2),
+    farmManager: new FarmManager(),
+  }, sm.load());
+
+  const alice2 = chars2.find(c => c.id === "alice");
+  assert.equal(alice2.strategy.goal, "割安なニンジンを仕入れて高値転売を狙う");
+  assert.equal(alice2.strategy.focusAction, "trade");
+  assert.equal(alice2.strategy.targetItem, "carrot");
+  assert.equal(alice2.strategy.revisionCount, 1);
+});

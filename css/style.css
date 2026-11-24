@@ -1737,6 +1737,33 @@ select:focus-visible {
   border-color: var(--c-inputFocus);
 }
 
+.inv-strategy-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--c-msgText);
+  background: rgba(216, 200, 168, 0.28);
+  border-radius: 5px;
+  padding: 4px 7px;
+  line-height: 1.4;
+}
+
+.strategy-style-pill {
+  flex-shrink: 0;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--c-goldText);
+  background: rgba(196, 138, 0, 0.14);
+  padding: 1px 6px;
+  border-radius: 8px;
+}
+
+.strategy-goal-text {
+  color: var(--c-msgText);
+  min-width: 0;
+}
+
 .recipe-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);

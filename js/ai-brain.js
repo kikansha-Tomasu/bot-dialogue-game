@@ -116,17 +116,275 @@ class AIBrain {
     }, 50);
   }
 
+  _ensureStrategy(char) {
+    if (!char || char.isPlayer) return null;
+    if (!char.strategy) {
+      const p = char.strategyProfile || {};
+      char.strategy = {
+        archetype: p.archetype || "balanced",
+        styleLabel: p.styleLabel || "バランス型",
+        goal: p.defaultGoal || "採集・農業・取引を組み合わせて総資産1位を目指す",
+        focusAction: p.defaultFocus || "gather",
+        targetItem: p.defaultItem || "wood",
+        targetRival: "Player",
+        turnCount: 0,
+        revisionCount: 0,
+        lastRank: 0,
+        lastUpdatedAt: 0,
+      };
+    }
+    return char.strategy;
+  }
+
+  _findMissingBuildingResource(char) {
+    if (!this.buildingManager) return null;
+    const myBuildings = this.buildingManager.placed.filter(b => b.builderId === char.id);
+    if (myBuildings.length >= 2) return null;
+
+    let bestMissing = null;
+    let bestShortfall = Infinity;
+    for (const recipe of Object.values(BUILDING_RECIPES)) {
+      let totalMissing = 0;
+      let firstMissing = null;
+      for (const [res, need] of Object.entries(recipe.cost || {})) {
+        const diff = Math.max(0, need - (char.inventory[res] || 0));
+        totalMissing += diff;
+        if (diff > 0 && !firstMissing) firstMissing = res;
+      }
+      if (totalMissing > 0 && totalMissing < bestShortfall) {
+        bestShortfall = totalMissing;
+        bestMissing = firstMissing;
+      }
+    }
+    return bestMissing;
+  }
+
+  _findMissingCookingIngredient(char) {
+    if (!this.farmManager || typeof COOKING_RECIPES === "undefined") return null;
+    let bestMissing = null;
+    let bestShortfall = Infinity;
+    for (const recipe of Object.values(COOKING_RECIPES)) {
+      const allReq = { ...(recipe.crops || {}), ...(recipe.resources || {}) };
+      let totalMissing = 0;
+      let haveAny = false;
+      let firstMissing = null;
+      for (const [item, need] of Object.entries(allReq)) {
+        const have = char.inventory[item] || 0;
+        if (have > 0) haveAny = true;
+        const diff = Math.max(0, need - have);
+        totalMissing += diff;
+        if (diff > 0 && !firstMissing) firstMissing = item;
+      }
+      if (haveAny && totalMissing > 0 && totalMissing < bestShortfall) {
+        bestShortfall = totalMissing;
+        bestMissing = firstMissing;
+      }
+    }
+    return bestMissing;
+  }
+
+  // ブラウザ内蔵 0.5B モデルでも途中で切れない完全圧縮の盤面・戦略サマリー（約220〜300文字）
+  _buildCompactStrategicContext(char) {
+    const s = this._ensureStrategy(char);
+    const rankInfo = this._getCharRank(char);
+    const invSummary = getInventorySummary(char.inventory, 5) || "空";
+    const myBuildings = this.buildingManager?.placed.filter(b => b.builderId === char.id).length || 0;
+    const affordableBuilds = this.buildingManager
+      ? Object.keys(BUILDING_RECIPES)
+          .filter(t => inventoryCanAfford(char.inventory, BUILDING_RECIPES[t].cost))
+          .map(t => BUILDING_RECIPES[t].name)
+      : [];
+    const myPlots = this.farmManager ? this.farmManager.getPlotsByOwner(char.id).length : 0;
+    const ripePlots = this.farmManager ? this.farmManager.getRipePlotsByOwner(char.id).length : 0;
+    const cookable = this.farmManager && typeof COOKING_RECIPES !== "undefined"
+      ? Object.values(COOKING_RECIPES).filter(r => this.farmManager.canCook(char, r.id).ok).map(r => r.name)
+      : [];
+    const openOrders = (this.orderBook?.orders || [])
+      .filter(o => o.posterId !== char.id)
+      .slice(0, 4)
+      .map(o => {
+        const side = o.sellType === "coin" ? "買" : "売";
+        const label = RESOURCE_EMOJI[o.resourceType] || o.resourceType;
+        return `${o.posterName}${side}${label}×${o.sellType === "coin" ? o.buyAmount : o.sellAmount}@🪙${o.sellType === "coin" ? o.sellAmount : o.buyAmount}`;
+      })
+      .join(", ");
+    const prices = this._getTradableItemTypes()
+      .filter(t => (this.orderBook?.priceHistory?.[t]?.length || 0) > 0)
+      .slice(0, 5)
+      .map(t => {
+        const h = this.orderBook.priceHistory[t];
+        return `${RESOURCE_EMOJI[t]}${h[h.length - 1].toFixed(1).replace(/\.0$/, "")}`;
+      })
+      .join(" ");
+
+    const gapStr = rankInfo.rank === 1
+      ? "現在1位"
+      : `${rankInfo.rank}位(1位${rankInfo.leaderName}と差-${rankInfo.gapFromLeader.toFixed(0)}🪙)`;
+
+    return (
+      `役職:${char.name}(${s?.styleLabel || "バランス型"}) | 作戦:${s?.goal || ""} [重視:${s?.focusAction || "gather"} / 目標:${s?.targetItem || "wood"}]\n` +
+      `順位:${gapStr}(総資産${rankInfo.total.toFixed(0)}🪙) | 所持:${invSummary}\n` +
+      `建物:${myBuildings}/2(建築可:${affordableBuilds.join("・") || "なし"}) | 農地:${myPlots}/2(収穫可:${ripePlots}) | 料理可:${cookable.join("・") || "なし"}\n` +
+      `取引板:${openOrders || "注文なし"} | 相場:${prices || "未成立"}`
+    );
+  }
+
+  _parseStrategyPlan(text) {
+    if (!text) return null;
+    const focusMatch = text.match(/FOCUS\s*[:：]\s*(gather|farm|trade|build|chat)/i);
+    const itemMatch = text.match(/TARGET_ITEM\s*[:：]\s*([a-z_]+)/i);
+    const goalMatch = text.match(/GOAL\s*[:：]\s*([^\n]+)/i);
+
+    const focusAction = focusMatch ? focusMatch[1].toLowerCase() : null;
+    const validItems = this._getTradableItemTypes();
+    const targetItem = itemMatch && validItems.includes(itemMatch[1].toLowerCase())
+      ? itemMatch[1].toLowerCase()
+      : null;
+
+    let goal = goalMatch ? goalMatch[1].replace(/^["「『]|["」』]$/g, "").trim() : "";
+    if (goal) {
+      goal = LMStudioClient.truncateToSentences(goal, 1).slice(0, 48);
+      if (LMStudioClient.isCorruptedText(goal)) goal = "";
+    }
+
+    if (!focusAction && !goal) return null;
+    return { focusAction, targetItem, goal };
+  }
+
+  _computeDynamicStrategyFallback(char) {
+    const s = this._ensureStrategy(char);
+    const archetype = s.archetype;
+    const myBuildings = this.buildingManager?.placed.filter(b => b.builderId === char.id).length || 0;
+    const affordableBuilds = this.buildingManager
+      ? Object.keys(BUILDING_RECIPES).filter(t => inventoryCanAfford(char.inventory, BUILDING_RECIPES[t].cost))
+      : [];
+    const myPlots = this.farmManager ? this.farmManager.getPlotsByOwner(char.id).length : 0;
+    const ripePlots = this.farmManager ? this.farmManager.getRipePlotsByOwner(char.id).length : 0;
+    const townLv = this.progression?.townLevel || 0;
+    const canPlant = this.farmManager
+      ? this.farmManager.getAvailableCrops(char, townLv).some(c => this.farmManager.canPlant(char, c.id, townLv).ok)
+      : false;
+    const cookable = this.farmManager && typeof COOKING_RECIPES !== "undefined"
+      ? Object.values(COOKING_RECIPES).find(r => this.farmManager.canCook(char, r.id).ok)
+      : null;
+    const heldDish = typeof DISH_ITEM_TYPES !== "undefined"
+      ? DISH_ITEM_TYPES.find(d => (char.inventory[d] || 0) >= 1)
+      : null;
+    const heldCrop = typeof CROP_ITEM_TYPES !== "undefined"
+      ? CROP_ITEM_TYPES.find(c => (char.inventory[c] || 0) >= 1)
+      : null;
+    const otherOrders = (this.orderBook?.orders || []).filter(o => o.posterId !== char.id);
+
+    if (archetype === "infrastructure_builder") {
+      if (myBuildings < 2 && affordableBuilds.length > 0) {
+        const bName = BUILDING_RECIPES[affordableBuilds[0]].name;
+        return { focusAction: "build", targetItem: "wood", goal: `資源が揃ったので${bName}を建てて自動生産を確立する` };
+      }
+      if (myBuildings < 2) {
+        const miss = this._findMissingBuildingResource(char) || "wood";
+        return { focusAction: "gather", targetItem: miss, goal: `${RESOURCE_LABEL[miss]}を集めて${myBuildings + 1}棟目の建物を完成させる` };
+      }
+      return { focusAction: "trade", targetItem: heldDish || heldCrop || "wood", goal: "建物の自動生産品と余剰資源を取引板で堅実に売る" };
+    }
+
+    if (archetype === "culinary_craft") {
+      if (ripePlots > 0 || cookable) {
+        return { focusAction: "farm", targetItem: cookable?.id || "carrot_salad", goal: "作物を収穫して料理へ加工し、高付加価値で売る準備をする" };
+      }
+      if (heldDish) {
+        return { focusAction: "trade", targetItem: heldDish, goal: `完成した${RESOURCE_LABEL[heldDish]}を取引板で高く売り抜ける` };
+      }
+      const missingIng = this._findMissingCookingIngredient(char);
+      if (missingIng) {
+        const isBase = ["wood", "stone", "herb", "fish"].includes(missingIng);
+        return {
+          focusAction: isBase ? "gather" : "trade",
+          targetItem: missingIng,
+          goal: `料理用の${RESOURCE_LABEL[missingIng]}を集めてごちそうを量産する`,
+        };
+      }
+      if (myPlots < 2 && canPlant) {
+        return { focusAction: "farm", targetItem: "carrot", goal: "農地2区画をフル稼働させて料理用の作物を量産する" };
+      }
+      return { focusAction: "gather", targetItem: "herb", goal: "種まきと料理に必要な薬草・木材を先に確保する" };
+    }
+
+    // market_arbitrage (Alice)
+    if (otherOrders.length > 0) {
+      const topOrder = otherOrders[0];
+      const lbl = RESOURCE_LABEL[topOrder.resourceType] || topOrder.resourceType;
+      return { focusAction: "trade", targetItem: topOrder.resourceType, goal: `取引板の${lbl}の価格差を見極めて有利に売買する` };
+    }
+    if (heldDish || heldCrop) {
+      const target = heldDish || heldCrop;
+      return { focusAction: "trade", targetItem: target, goal: `${RESOURCE_LABEL[target]}を強気の指値で取引板に出しコインを稼ぐ` };
+    }
+    const base = ["wood", "stone", "herb", "fish"];
+    const highestBase = [...base].sort((a, b) => {
+      const pa = this.orderBook?.getAIValuation?.(a, char) || 3;
+      const pb = this.orderBook?.getAIValuation?.(b, char) || 3;
+      return pb - pa;
+    })[0];
+    return { focusAction: "gather", targetItem: highestBase, goal: `評価の高い${RESOURCE_LABEL[highestBase]}を集めて取引板で高値売却を狙う` };
+  }
+
+  // 数ターンごと／順位変動時に長期戦略をLLMで見直し・更新する
+  async _maybeReviseStrategy(char, force = false) {
+    const s = this._ensureStrategy(char);
+    if (!s) return null;
+
+    const rankInfo = this._getCharRank(char);
+    const rankChanged = s.lastRank > 0 && s.lastRank !== rankInfo.rank;
+    const due = force || s.revisionCount === 0 || s.turnCount >= 3 || rankChanged;
+    if (!due) {
+      s.turnCount++;
+      return s;
+    }
+
+    s.lastRank = rankInfo.rank;
+    const topRival = rankInfo.ranked.find(r => r.id !== char.id);
+    s.targetRival = topRival?.name || "Player";
+    s.turnCount = 0;
+
+    let parsed = null;
+    if (this._canUseLLMForSpeech() && typeof this.apiClient.callAIForStrategy === "function") {
+      try {
+        const brief = this._buildCompactStrategicContext(char);
+        const raw = await this.apiClient.callAIForStrategy(char, brief);
+        parsed = this._parseStrategyPlan(raw);
+      } catch (err) {
+        console.warn(`[AIBrain] ${char.name} strategy review fallback:`, err.message);
+      }
+    }
+
+    const fallback = this._computeDynamicStrategyFallback(char);
+    s.focusAction = parsed?.focusAction || fallback.focusAction || s.focusAction;
+    s.targetItem = parsed?.targetItem || fallback.targetItem || s.targetItem;
+    s.goal = parsed?.goal || fallback.goal || s.goal;
+    s.revisionCount++;
+    s.lastUpdatedAt = Date.now();
+    if (this.onStateChange) this.onStateChange();
+    return s;
+  }
+
   async _aiDoMasterAction(c) {
     if (this.isProcessing[c.id]) return;
 
-    // ε-greedy 探索確率時のみランダム行動（それ以外は常に Hugging Face へ接続を試みる）
+    this.isProcessing[c.id] = true;
+
+    // 行動前に長期戦略を見直し・更新（3ターンごと／順位変動時）
+    try {
+      await this._maybeReviseStrategy(c);
+    } catch (_) {}
+
+    // 低確率（10%）の探索ステップは戦略重視フォールバックへ
     if (Math.random() < GAME_CONFIG.aiRandomActionRate) {
+      this.isProcessing[c.id] = false;
       this._fallbackAction(c);
       return;
     }
 
-    this.isProcessing[c.id] = true;
-
+    const s = this._ensureStrategy(c);
     const invSummary = getInventorySummary(c.inventory) || "空";
     const coinAmt = c.inventory.coin || 0;
     const myBuildings = this.buildingManager?.placed.filter(b => b.builderId === c.id) ?? [];
@@ -149,8 +407,12 @@ class AIBrain {
     const farmLine = this.farmManager
       ? `農地の状況: ${this.farmManager.buildSummaryForAI(c)}\n`
       : "";
+    const strategyLine = s
+      ? `あなたの得意戦法: ${s.styleLabel} ／ 現在の長期作戦: ${s.goal}（重視行動: ${s.focusAction}, 狙う品目: ${RESOURCE_LABEL[s.targetItem] || s.targetItem}, 主な対抗ライバル: ${s.targetRival}）\n`
+      : "";
 
     const context =
+      strategyLine +
       `あなた（${c.name}）のインベントリ: ${invSummary}、コイン: ${coinAmt}\n` +
       townLine +
       `ライバル総資産ランキング（全員が1位を競うライバルです）:\n${this._buildRivalRankingSummary(c)}\n` +
@@ -166,11 +428,13 @@ class AIBrain {
       `自分の建物数: ${myBuildings.length}/2\n` +
       `資源ノードの空き: ${hasNodes ? "あり" : "なし（全枯渇）"}\n` +
       (executableOrders.length > 0 ? `板に今すぐ成立させられる注文が${executableOrders.length}件あります。trade + execute で約定できます。\n` : "") +
-      `次に何をするか決めてください。`;
+      `現在の長期作戦に沿って、次に何をするか決めてください。`;
+
+    const compactContext = this._buildCompactStrategicContext(c);
 
     let planText = null;
     try {
-      planText = await this.apiClient.callAIForMasterAction(c, context, nearest?.name || "Player");
+      planText = await this.apiClient.callAIForMasterAction(c, context, nearest?.name || "Player", compactContext);
       if (planText) {
         if (!this.llmAvailable) {
           this.llmAvailable = true;
@@ -227,6 +491,23 @@ class AIBrain {
     if (planText) {
       const match = planText.match(/RESOURCE\s*[:：]\s*(wood|stone|herb|fish)/i);
       if (match) chosenType = match[1].toLowerCase();
+    }
+
+    // 戦略連動：明示指定が無ければ各キャラの作戦・不足素材に基づいて採集対象を決定
+    if (!chosenType) {
+      const s = this._ensureStrategy(c);
+      if (s?.targetItem && RESOURCE_TYPES.includes(s.targetItem)) {
+        chosenType = s.targetItem;
+      } else if (s?.archetype === "infrastructure_builder") {
+        chosenType = this._findMissingBuildingResource(c);
+      } else if (s?.archetype === "culinary_craft") {
+        const miss = this._findMissingCookingIngredient(c);
+        chosenType = RESOURCE_TYPES.includes(miss) ? miss : "herb";
+      } else if (s?.archetype === "market_arbitrage" && this.orderBook) {
+        chosenType = [...RESOURCE_TYPES].sort((a, b) =>
+          (this.orderBook.getAIValuation?.(b, c) || 3) - (this.orderBook.getAIValuation?.(a, c) || 3)
+        )[0];
+      }
     }
 
     if (!chosenType) {
@@ -293,9 +574,14 @@ class AIBrain {
     try {
       const invSummary = getInventorySummary(char.inventory) || "なし";
       const rankInfo = this._getCharRank(char);
+      const s = this._ensureStrategy(char);
+      const strategyHint = s
+        ? `【あなたの戦法・作戦（内部方針なのでそのまま暴露せず会話に活かす）】${s.styleLabel}：${s.goal}\n`
+        : "";
       const prompt =
         `【いま起きた出来事】${actionFact}\n` +
         `【現在の状況】持ち物: ${invSummary} ／ 総資産ランキング${rankInfo.rank}位（${rankInfo.total.toFixed(1)}🪙）\n` +
+        strategyHint +
         `この出来事について、@${target.name} に向かって${char.name}らしい自然な日本語で1〜2文だけ感想や次の狙いを話しかけてください。定型文ではなく今の状況に合わせた言葉にしてください。`;
 
       const response = await this.apiClient.callAI(
@@ -413,19 +699,35 @@ class AIBrain {
         : 2.5
     );
 
+    const s = this._ensureStrategy(char);
+    const sellMarkup = char.strategyProfile?.sellMarkup || 1.08;
+
     if (haveItems.length > 0 && (Math.random() < 0.65 || availCoin < 2)) {
-      // 料理＞作物＞基本資源の優先度で売りに出しやすい品目を選ぶ
+      // 料理＞作物＞基本資源の優先度で売りに出しやすい品目を選ぶ（Bobは建築素材を温存）
       const dishHeld = haveItems.filter(t => typeof DISH_ITEM_TYPES !== "undefined" && DISH_ITEM_TYPES.includes(t));
       const cropHeld = haveItems.filter(t => typeof CROP_ITEM_TYPES !== "undefined" && CROP_ITEM_TYPES.includes(t));
-      const pool = dishHeld.length > 0 ? dishHeld : cropHeld.length > 0 ? cropHeld : haveItems;
+      const myBuildings = this.buildingManager?.placed.filter(b => b.builderId === char.id).length || 0;
+      const nonBuildingHeld = s?.archetype === "infrastructure_builder" && myBuildings < 2
+        ? haveItems.filter(t => (char.inventory[t] || 0) >= 3 || dishHeld.includes(t) || cropHeld.includes(t))
+        : haveItems;
+      const pool = dishHeld.length > 0
+        ? dishHeld
+        : cropHeld.length > 0
+          ? cropHeld
+          : (nonBuildingHeld.length > 0 ? nonBuildingHeld : haveItems);
       sellType = pool[Math.floor(Math.random() * pool.length)];
       sellAmount = Math.min(2, this.orderBook.getAvailableBalance(char, sellType));
       buyType = "coin";
       const ref = getRefPrice(sellType);
-      const mult = 0.9 + Math.random() * 0.25;
+      const mult = (sellMarkup - 0.08) + Math.random() * 0.18;
       buyAmount = Math.max(1, Math.round(sellAmount * ref * mult));
     } else if (availCoin >= 2) {
-      // 基本資源とTier1〜2作物を中心に買い注文を提示
+      // 戦略ターゲット品目・不足素材を優先して買い注文を提示（Aliceは割安指値で仕入れを狙う）
+      const wanted = s?.archetype === "culinary_craft"
+        ? this._findMissingCookingIngredient(char)
+        : s?.archetype === "infrastructure_builder"
+          ? this._findMissingBuildingResource(char)
+          : s?.targetItem;
       const buyPool = ALL_ITEMS.filter(t => {
         if (typeof COOKING_RECIPES !== "undefined" && COOKING_RECIPES[t]) {
           return availCoin >= getRefPrice(t);
@@ -435,11 +737,14 @@ class AIBrain {
         }
         return true;
       });
-      buyType = buyPool[Math.floor(Math.random() * buyPool.length)] || "wood";
+      buyType = (wanted && buyPool.includes(wanted))
+        ? wanted
+        : (buyPool[Math.floor(Math.random() * buyPool.length)] || "wood");
       buyAmount = 1;
       sellType = "coin";
       const ref = getRefPrice(buyType);
-      const mult = 0.85 + Math.random() * 0.2;
+      const bidBase = s?.archetype === "market_arbitrage" ? 0.78 : 0.88;
+      const mult = bidBase + Math.random() * 0.16;
       sellAmount = Math.max(1, Math.min(availCoin, Math.round(ref * mult)));
     } else {
       return;
@@ -599,6 +904,8 @@ class AIBrain {
   }
 
   _fallbackAction(c) {
+    const s = this._ensureStrategy(c);
+
     // 収穫可能な自分の畑がある場合は即座に収穫する
     if (this.farmManager && this.farmManager.getRipePlotsByOwner(c.id).length > 0) {
       this._executePlanFarm(c, null);
@@ -613,17 +920,38 @@ class AIBrain {
     const townLv = this.progression?.townLevel || 0;
     const canFarm = this.farmManager &&
       this.farmManager.getAvailableCrops(c, townLv).some(crop => this.farmManager.canPlant(c, crop.id, townLv).ok);
+    const canCook = this.farmManager && typeof COOKING_RECIPES !== "undefined" &&
+      Object.values(COOKING_RECIPES).some(r => this.farmManager.canCook(c, r.id).ok);
     const hasOpenOrders = Boolean(this.orderBook && this.orderBook.orders.some(o => o.posterId !== c.id));
 
+    // 建築投資型(Bob)は建てられる瞬間に即建築、農業料理型(Carol)は料理可能なら即調理
+    if (s?.archetype === "infrastructure_builder" && this.buildingManager && affordable.length > 0 && myBuildings.length < 2) {
+      this._executePlanBuild(c, null);
+      return;
+    }
+    if (s?.archetype === "culinary_craft" && canCook) {
+      this._executePlanFarm(c, null);
+      return;
+    }
+
     const actions = ["chat"];
-    if (hasNodes) actions.push("gather", "gather");
-    if (canFarm) actions.push("farm", "farm"); // ライバルも積極的に農地を開拓
+    if (hasNodes) actions.push("gather");
+    if (canFarm || canCook) actions.push("farm");
     if (this.orderBook) {
       actions.push("trade");
-      if (hasOpenOrders) actions.push("trade"); // 板に他者注文があれば市場参加率を高める
+      if (hasOpenOrders) actions.push("trade");
     }
     if (this.buildingManager && affordable.length > 0 && myBuildings.length < 2) {
       actions.push("build");
+    }
+
+    // 現在の長期戦略の重視行動（focusAction）を強く重み付け
+    const focus = s?.focusAction;
+    if (focus === "gather" && hasNodes) actions.push("gather", "gather", "gather");
+    else if (focus === "farm" && (canFarm || canCook)) actions.push("farm", "farm", "farm");
+    else if (focus === "trade" && this.orderBook) actions.push("trade", "trade", "trade");
+    else if (focus === "build" && this.buildingManager && affordable.length > 0 && myBuildings.length < 2) {
+      actions.push("build", "build", "build");
     }
 
     const choice = actions[Math.floor(Math.random() * actions.length)];
@@ -775,6 +1103,10 @@ class AIBrain {
 
   _buildChatEconomicContext(char) {
     const lines = [];
+    const s = this._ensureStrategy(char);
+    if (s) {
+      lines.push(`【あなたの得意戦法・現在の長期作戦（内部戦略のため直接暴露せず交渉に活かすこと）】\n  ${s.styleLabel}: ${s.goal}（重視: ${s.focusAction} / 狙い: ${RESOURCE_LABEL[s.targetItem] || s.targetItem}）`);
+    }
     lines.push(`【ライバル総資産ランキング】\n${this._buildRivalRankingSummary(char)}`);
     lines.push(`【あなたの資産状況】\n${this._buildAssetValueSummary(char)}`);
     if (this.farmManager) {

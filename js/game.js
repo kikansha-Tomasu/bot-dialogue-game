@@ -1430,6 +1430,15 @@ class Game {
         ? `<span class="inv-gap-badge is-leader">👑 トップ</span>`
         : `<span class="inv-gap-badge">1位差 -${gap.toFixed(1)}🪙</span>`;
 
+      const escapeHtml = (s) => String(s ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+      const strategyRow = !char.isPlayer && char.strategy?.goal
+        ? `<div class="inv-strategy-line"><span class="strategy-style-pill">🧭 ${escapeHtml(char.strategy.styleLabel || "戦略")}</span><span class="strategy-goal-text">${escapeHtml(char.strategy.goal)}</span></div>`
+        : "";
+
       return `<div class="inv-char-card${char.isPlayer ? " inv-player-card" : ""}">
         <div class="inv-card-top">
           <span class="inv-rank">${medals[idx] || `${idx + 1}.`}</span>
@@ -1440,6 +1449,7 @@ class Game {
           ${gapBadge}
           <span class="inv-networth" title="コイン＋資源評価＋建物＋農地評価">総資産 <b>${asset.total.toFixed(1)}🪙</b></span>
         </div>
+        ${strategyRow}
         <div class="inv-card-items ${items ? "" : "inv-char-empty"}">${items || "（所持品なし）"}</div>
       </div>`;
     }).join("");

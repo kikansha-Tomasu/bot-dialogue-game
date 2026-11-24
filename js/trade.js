@@ -692,22 +692,41 @@ class OrderBook {
       if (held === 0) anchor *= 1.15;
       else if (held >= 4) anchor *= 0.85;
 
-      const charBias = aiChar.id === "carol" && typeof CROP_CATALOG !== "undefined" && CROP_CATALOG[itemType]
-        ? 1.12
-        : aiChar.id === "alice"
-          ? 1.04
-          : aiChar.id === "bob"
-            ? 0.98
-            : 1.0;
-      anchor *= charBias;
+      const archetype = aiChar.strategy?.archetype || aiChar.strategyProfile?.archetype || "";
+      const isCrop = typeof CROP_CATALOG !== "undefined" && Boolean(CROP_CATALOG[itemType]);
+      const isDish = typeof COOKING_RECIPES !== "undefined" && Boolean(COOKING_RECIPES[itemType]);
+      const isBase = ["wood", "stone", "herb", "fish"].includes(itemType);
+
+      if (archetype === "culinary_craft" && (isCrop || itemType === "herb")) {
+        anchor *= 1.18; // Carol: 料理用の作物・薬草を高く評価
+      } else if (archetype === "infrastructure_builder" && isBase) {
+        anchor *= 1.08; // Bob: 建築素材を重視
+      } else if (archetype === "market_arbitrage" && (isDish || isCrop)) {
+        anchor *= 1.06; // Alice: 高付加価値商品の転売余地を評価
+      } else {
+        const charBias = aiChar.id === "carol" && isCrop
+          ? 1.12
+          : aiChar.id === "alice"
+            ? 1.04
+            : aiChar.id === "bob"
+              ? 0.98
+              : 1.0;
+        anchor *= charBias;
+      }
+
+      // 現在の長期戦略で狙っている品目なら評価を上乗せ
+      if (aiChar.strategy?.targetItem && aiChar.strategy.targetItem === itemType) {
+        anchor *= 1.15;
+      }
     }
 
     return Math.max(1, anchor);
   }
 
-  // AI 用：板上の注文を価格妥当性付きで審査し約定（法外な高値・安値は見送る）
+  // AI 用：板上の注文を戦略・価格妥当性付きで審査し約定（法外な高値・安値は見送る）
   tryAIExecute(aiChar, preferResource = null) {
     this.pruneInvalidOrders();
+    const buyTol = aiChar?.strategyProfile?.buyTolerance || 1.4;
     const candidates = this.orders.filter(o => {
       if (o.posterId === aiChar.id) return false;
       if ((aiChar.inventory[o.buyType] || 0) < o.buyAmount) return false;
@@ -715,22 +734,24 @@ class OrderBook {
 
       const fair = this.getAIValuation(o.resourceType, aiChar);
       if (o.side === "sell") {
-        // AIが買い手：高すぎる売り注文は買わない
-        return o.unitPrice <= fair * 1.4;
+        // AIが買い手：高すぎる売り注文は買わない（戦略プロファイル別の許容上限）
+        return o.unitPrice <= fair * buyTol;
       }
       // AIが売り手：安すぎる買い注文には売らない
       return o.unitPrice >= fair * 0.65;
     });
     if (!candidates.length) return null;
 
-    // プレイヤー注文と指定品目を優先、次いで自分にとって割安/割高な順
+    const targetItem = preferResource || aiChar?.strategy?.targetItem || null;
+
+    // プレイヤー注文と戦略ターゲット品目を優先、次いで自分にとって割安/割高な順
     candidates.sort((a, b) => {
       const aPlayer = a.posterId === "player" ? 1 : 0;
       const bPlayer = b.posterId === "player" ? 1 : 0;
       if (aPlayer !== bPlayer) return bPlayer - aPlayer;
-      if (preferResource) {
-        const aPref = a.resourceType === preferResource ? 1 : 0;
-        const bPref = b.resourceType === preferResource ? 1 : 0;
+      if (targetItem) {
+        const aPref = a.resourceType === targetItem ? 1 : 0;
+        const bPref = b.resourceType === targetItem ? 1 : 0;
         if (aPref !== bPref) return bPref - aPref;
       }
       const aFair = this.getAIValuation(a.resourceType, aiChar);

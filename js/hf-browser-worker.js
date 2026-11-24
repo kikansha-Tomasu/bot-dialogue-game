@@ -51,12 +51,12 @@ function isCorruptedJapanese(rawText, allowStructuredPlan = false) {
   if (/[\u00C0-\u024F\u1E00-\u1EFF]/.test(text)) return true;
 
   if (allowStructuredPlan) {
-    // PLAN 応答では MESSAGE: 行があればその日本語品質を検証し、無ければ PLAN キーワードのみ確認
-    const msgMatch = text.match(/MESSAGE\s*[:：]\s*(.+)/i);
+    // PLAN / FOCUS 応答では MESSAGE: / GOAL: 行があればその日本語品質を検証し、無ければキーワードのみ確認
+    const msgMatch = text.match(/(?:MESSAGE|GOAL)\s*[:：]\s*(.+)/i);
     if (msgMatch) {
       return isCorruptedJapanese(msgMatch[1], false);
     }
-    return !/PLAN\s*[:：]\s*(gather|farm|trade|build|chat)/i.test(text);
+    return !/(?:PLAN|FOCUS)\s*[:：]\s*(gather|farm|trade|build|chat)/i.test(text);
   }
 
   const body = text

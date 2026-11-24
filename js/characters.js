@@ -3,7 +3,7 @@ const CHAR_FOOT_OFFSET_Y = 10;
 const CHAR_COLLISION_RADIUS = 8;
 
 class Character {
-  constructor({ id, name, color, emoji, startFx, startFy, personality, isPlayer, spriteFolder, model, ttsConfig }) {
+  constructor({ id, name, color, emoji, startFx, startFy, personality, isPlayer, spriteFolder, model, ttsConfig, strategyProfile }) {
     this.id = id;
     this.name = name;
     this.color = color;
@@ -12,6 +12,19 @@ class Character {
     this.personality = personality || "";
     this.model = model || null;
     this.ttsConfig = ttsConfig || null;
+    this.strategyProfile = strategyProfile || null;
+    this.strategy = !this.isPlayer ? {
+      archetype: strategyProfile?.archetype || "balanced",
+      styleLabel: strategyProfile?.styleLabel || "バランス型",
+      goal: strategyProfile?.defaultGoal || "採集・農業・取引を組み合わせて総資産1位を目指す",
+      focusAction: strategyProfile?.defaultFocus || "gather",
+      targetItem: strategyProfile?.defaultItem || "wood",
+      targetRival: "Player",
+      turnCount: 0,
+      revisionCount: 0,
+      lastRank: 0,
+      lastUpdatedAt: 0,
+    } : null;
 
     this.startFx = startFx;
     this.startFy = startFy;

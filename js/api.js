@@ -99,7 +99,7 @@ class HuggingFaceClient {
       return;
     }
     try {
-      this._worker = new Worker("js/hf-browser-worker.js?v=gh13", { type: "module" });
+      this._worker = new Worker("js/hf-browser-worker.js?v=gh14", { type: "module" });
       this._workerLoading = true;
       this._workerError = "";
       this._workerStage = "connecting";
@@ -501,17 +501,81 @@ class HuggingFaceClient {
     });
   }
 
-  async callAIForMasterAction(character, context, nearestName = "Player") {
+  // 数ターンごとにキャラクター自身の長期戦略方針をLLMで見直し・更新する
+  async callAIForStrategy(character, compactSummary) {
     const model = character.model || this.model;
     const queueKey = this.mode === "browser-hf" ? "browser-hf" : model;
     return this._withQueue(queueKey, async () => {
+      const styleLabel = character.strategyProfile?.styleLabel || character.strategy?.styleLabel || "バランス型";
+      const systemPrompt =
+        `あなたは${character.name}（得意戦法: ${styleLabel}）です。\n` +
+        `ライバル全員を上回り総資産1位を取るため、今の盤面（順位・在庫・建物・農地・取引板・相場）を踏まえて、今後数ターンの作戦を次の3行だけで出力してください。説明不要。\n` +
+        `FOCUS: gather / farm / trade / build のいずれか1つ\n` +
+        `TARGET_ITEM: 狙う品目ID（wood/stone/herb/fish/carrot/wheat/cabbage/tomato/corn/rice/pumpkin/strawberry/carrot_salad/herb_bread/tomato_soup/onigiri_bento/pumpkin_pie/strawberry_tart）\n` +
+        `GOAL: 15〜35文字の具体的な日本語作戦（例：薬草を集めてサラダを作り取引板で売る）`;
+
+      let text = "";
+      if (this.mode === "browser-hf") {
+        if (!this._workerReady) return null;
+        try {
+          const compactMsgs = [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: `${compactSummary}\n新しい作戦:` },
+          ];
+          const res = await this._runBrowserWorker(compactMsgs, 52, 0.45, {
+            doSample: true,
+            allowStructuredPlan: true,
+          });
+          text = res.content;
+        } catch (err) {
+          console.warn(`[HuggingFace Browser] callAIForStrategy skipped: ${err.message}`);
+          return null;
+        }
+      } else {
+        const messages = [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: `${compactSummary}\n新しい作戦:` },
+        ];
+        try {
+          const response = await this._fetchWithTimeout(
+            this.endpoint,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ model, max_tokens: 90, stream: false, messages }),
+            },
+            60000
+          );
+          if (!response.ok) return null;
+          const data = await response.json();
+          text = data.choices?.[0]?.message?.content?.trim()
+            || data.choices?.[0]?.message?.reasoning_content?.trim()
+            || "";
+        } catch (err) {
+          console.warn(`[HuggingFace] callAIForStrategy skipped: ${err.message}`);
+          return null;
+        }
+      }
+
+      if (!text) return null;
+      return HuggingFaceClient.stripReasoningTags(text);
+    });
+  }
+
+  async callAIForMasterAction(character, context, nearestName = "Player", compactContext = null) {
+    const model = character.model || this.model;
+    const queueKey = this.mode === "browser-hf" ? "browser-hf" : model;
+    return this._withQueue(queueKey, async () => {
+      const styleLabel = character.strategyProfile?.styleLabel || character.strategy?.styleLabel || "バランス型";
+      const currentGoal = character.strategy?.goal || "採集・農業・取引で総資産1位を目指す";
       const systemPrompt = character.personality + `
 
 あなたは今、次に何をするか決めようとしています。
 **他のキャラクター（Player含む）は全員ライバルです。目標: 総資産ランキングでライバル全員を上回り1位になること。**
+**あなたの得意戦法: ${styleLabel} ／ 現在の長期作戦: ${currentGoal}**
 **重要ルール: コインは取引板での売買成立によってのみ増えます。作物や料理も収穫・調理しただけではコインにならないため、売りたい場合は取引板に注文を出して売ってください。**
 
-状況を踏まえ、以下の形式で次の行動を**1回だけ**出力してください。説明不要。
+状況と自分の長期作戦を踏まえ、以下の形式で次の行動を**1回だけ**出力してください。説明不要。
 
 採集する場合：
 PLAN: gather
@@ -552,14 +616,15 @@ PLAN:の直後は必ず gather / farm / trade / build / chat のいずれかの�
       if (this.mode === "browser-hf") {
         if (!this._workerReady) return null;
         try {
+          const brief = compactContext || context.slice(0, 420);
           const compactMsgs = [
             {
               role: "system",
-              content: "次の行動を PLAN: gather / farm / trade / build / chat と対象パラメータの2行だけで出力してください。",
+              content:
+                `あなたは${character.name}（${styleLabel}）。作戦「${currentGoal}」に沿って、` +
+                `次の行動を PLAN: gather / farm / trade / build / chat と対象パラメータの2行だけで出力してください。`,
             },
-            { role: "user", content: "状況: コイン50, 木材2\n次の行動:" },
-            { role: "assistant", content: "PLAN: farm\nCROP: carrot" },
-            { role: "user", content: `${context.slice(0, 420)}\n次の行動:` },
+            { role: "user", content: `${brief}\n次の行動:` },
           ];
           const res = await this._runBrowserWorker(compactMsgs, 32, 0.45, {
             doSample: true,
