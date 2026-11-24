@@ -96,7 +96,7 @@ class SaveManager {
         generateTimer: b.generateTimer,
       })),
       orderBook: {
-        priceHistory: game.orderBook?.priceHistory || { wood: [], stone: [], herb: [], fish: [] },
+        priceHistory: game.orderBook?.priceHistory || {},
         tradeHistory: (game.orderBook?.tradeHistory || []).slice(-25),
         orders: (game.orderBook?.orders || []).map(o => ({
           posterId: o.posterId,
@@ -117,12 +117,16 @@ class SaveManager {
     const h = Math.max(1, game.canvas?.height || 600);
 
     // キャラクター在庫・位置・アバター・会話履歴復元
+    const allItemKeys = typeof TRADABLE_ITEM_TYPES !== "undefined"
+      ? ["coin", ...TRADABLE_ITEM_TYPES]
+      : ["coin", "wood", "stone", "herb", "fish"];
     if (Array.isArray(saved.characters)) {
       for (const sc of saved.characters) {
         const target = (game.characters || []).find(c => c.id === sc.id);
         if (!target) continue;
         if (sc.inventory && typeof sc.inventory === "object") {
-          for (const key of ["wood", "stone", "herb", "fish", "coin"]) {
+          for (const key of allItemKeys) {
+            if (!(key in sc.inventory)) continue;
             const val = Number(sc.inventory[key]);
             if (Number.isFinite(val) && val >= 0) target.inventory[key] = Math.floor(val);
           }
@@ -167,8 +171,11 @@ class SaveManager {
     // 取引履歴・価格履歴・板注文復元
     if (saved.orderBook && game.orderBook) {
       const ph = saved.orderBook.priceHistory;
+      const tradableKeys = typeof TRADABLE_ITEM_TYPES !== "undefined"
+        ? TRADABLE_ITEM_TYPES
+        : ["wood", "stone", "herb", "fish"];
       if (ph && typeof ph === "object") {
-        for (const res of ["wood", "stone", "herb", "fish"]) {
+        for (const res of tradableKeys) {
           if (Array.isArray(ph[res])) {
             game.orderBook.priceHistory[res] = ph[res]
               .map(Number)

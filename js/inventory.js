@@ -1,7 +1,10 @@
-const INVENTORY_RESOURCE_TYPES = ["wood", "stone", "herb", "fish"];
+const INITIAL_COINS = 50;
+const INVENTORY_RESOURCE_TYPES = typeof TRADABLE_ITEM_TYPES !== "undefined"
+  ? TRADABLE_ITEM_TYPES
+  : ["wood", "stone", "herb", "fish"];
 
 function makeInventory() {
-  return { wood: 0, stone: 0, herb: 0, fish: 0, coin: 10 };
+  return { wood: 0, stone: 0, herb: 0, fish: 0, coin: INITIAL_COINS };
 }
 
 function inventoryAdd(inv, type, amount) {
@@ -24,12 +27,22 @@ function inventoryDeduct(inv, cost) {
   return true;
 }
 
-function getInventorySummary(inv) {
+function getInventorySummary(inv, maxNonCoinItems = Infinity) {
   if (!inv) return "";
-  return Object.entries(inv)
-    .filter(([, v]) => v > 0)
-    .map(([k, v]) => `${RESOURCE_EMOJI[k] || k}×${v}`)
-    .join("  ");
+  const parts = [];
+  if ((inv.coin || 0) > 0) {
+    parts.push(`${RESOURCE_EMOJI.coin || "🪙"}×${inv.coin}`);
+  }
+  const nonCoin = Object.entries(inv)
+    .filter(([k, v]) => k !== "coin" && v > 0);
+  const shown = Number.isFinite(maxNonCoinItems) ? nonCoin.slice(0, maxNonCoinItems) : nonCoin;
+  for (const [k, v] of shown) {
+    parts.push(`${RESOURCE_EMOJI[k] || k}×${v}`);
+  }
+  if (nonCoin.length > shown.length) {
+    parts.push(`他${nonCoin.length - shown.length}種`);
+  }
+  return parts.join("  ");
 }
 
 function computeAssetValue(inv, priceHistory, extras = null) {
@@ -37,8 +50,11 @@ function computeAssetValue(inv, priceHistory, extras = null) {
   let resourceValue = 0;
   let pricedCount = 0;
   const breakdown = [];
+  const itemTypes = typeof TRADABLE_ITEM_TYPES !== "undefined"
+    ? TRADABLE_ITEM_TYPES
+    : INVENTORY_RESOURCE_TYPES;
 
-  for (const type of INVENTORY_RESOURCE_TYPES) {
+  for (const type of itemTypes) {
     const amt = inv?.[type] || 0;
     if (amt <= 0) continue;
     const hist = priceHistory?.[type];
@@ -68,7 +84,7 @@ function computeAssetValue(inv, priceHistory, extras = null) {
 }
 
 function drawInventoryHUD(ctx, inv, w, priceHistory = null, rankInfo = null) {
-  const summary = getInventorySummary(inv);
+  const summary = getInventorySummary(inv, 5);
   const medals = ["🥇1位", "🥈2位", "🥉3位", "4️⃣4位"];
   const rankPrefix = rankInfo && rankInfo.rank >= 1
     ? `${medals[rankInfo.rank - 1] || `${rankInfo.rank}位`}  |  `
@@ -108,6 +124,7 @@ function drawInventoryHUD(ctx, inv, w, priceHistory = null, rankInfo = null) {
 
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
+    INITIAL_COINS,
     INVENTORY_RESOURCE_TYPES,
     makeInventory,
     inventoryAdd,

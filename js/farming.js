@@ -1,5 +1,7 @@
 // ============================================================
-// farming.js — 農業プログレッション（8種作物×4成長ステージ・ライバル農地競争）
+// farming.js — 農業プログレッション（8種作物×4成長ステージ）＆料理クラフト
+// 収穫・調理では固定コインを付与せず、作物・料理アイテムを所持品へ追加する
+// 売却してコインを得るには取引板（OrderBook）に注文を出し約定させる必要がある
 // ============================================================
 
 const CROP_CATALOG = {
@@ -10,9 +12,9 @@ const CROP_CATALOG = {
     tier: 1,
     minTownLevel: 0,
     unlockCoinThreshold: 0,
-    cost: { coin: 2 },
+    cost: { wood: 1 },
     stageTime: 8, // 8秒×3段階 = 24秒で収穫可能
-    rewardCoins: 5,
+    harvestAmount: 1,
     bonusResource: "herb",
     bonusAmount: 1,
   },
@@ -23,9 +25,9 @@ const CROP_CATALOG = {
     tier: 1,
     minTownLevel: 0,
     unlockCoinThreshold: 0,
-    cost: { coin: 3 },
+    cost: { herb: 1 },
     stageTime: 9, // 27秒
-    rewardCoins: 7,
+    harvestAmount: 1,
     bonusResource: "wood",
     bonusAmount: 1,
   },
@@ -35,12 +37,12 @@ const CROP_CATALOG = {
     emoji: "🥬",
     tier: 2,
     minTownLevel: 1,
-    unlockCoinThreshold: 14,
-    cost: { coin: 4, herb: 1 },
+    unlockCoinThreshold: 60,
+    cost: { wood: 1, herb: 1 },
     stageTime: 10, // 30秒
-    rewardCoins: 10,
+    harvestAmount: 1,
     bonusResource: "herb",
-    bonusAmount: 2,
+    bonusAmount: 1,
   },
   tomato: {
     id: "tomato",
@@ -48,10 +50,10 @@ const CROP_CATALOG = {
     emoji: "🍅",
     tier: 2,
     minTownLevel: 1,
-    unlockCoinThreshold: 16,
-    cost: { coin: 5, herb: 1 },
+    unlockCoinThreshold: 60,
+    cost: { herb: 1, stone: 1 },
     stageTime: 11, // 33秒
-    rewardCoins: 12,
+    harvestAmount: 1,
     bonusResource: "fish",
     bonusAmount: 1,
   },
@@ -61,12 +63,12 @@ const CROP_CATALOG = {
     emoji: "🌽",
     tier: 3,
     minTownLevel: 2,
-    unlockCoinThreshold: 22,
-    cost: { coin: 7, wood: 1 },
+    unlockCoinThreshold: 75,
+    cost: { wood: 2 },
     stageTime: 12, // 36秒
-    rewardCoins: 16,
+    harvestAmount: 1,
     bonusResource: "wood",
-    bonusAmount: 2,
+    bonusAmount: 1,
   },
   rice: {
     id: "rice",
@@ -74,12 +76,12 @@ const CROP_CATALOG = {
     emoji: "🍙",
     tier: 3,
     minTownLevel: 2,
-    unlockCoinThreshold: 25,
-    cost: { coin: 8, fish: 1 },
+    unlockCoinThreshold: 75,
+    cost: { fish: 1, herb: 1 },
     stageTime: 13, // 39秒
-    rewardCoins: 19,
+    harvestAmount: 1,
     bonusResource: "stone",
-    bonusAmount: 2,
+    bonusAmount: 1,
   },
   pumpkin: {
     id: "pumpkin",
@@ -87,12 +89,12 @@ const CROP_CATALOG = {
     emoji: "🎃",
     tier: 4,
     minTownLevel: 3,
-    unlockCoinThreshold: 35,
-    cost: { coin: 11, stone: 1, herb: 1 },
+    unlockCoinThreshold: 95,
+    cost: { stone: 2, herb: 1 },
     stageTime: 14, // 42秒
-    rewardCoins: 26,
+    harvestAmount: 1,
     bonusResource: "stone",
-    bonusAmount: 2,
+    bonusAmount: 1,
   },
   strawberry: {
     id: "strawberry",
@@ -100,12 +102,12 @@ const CROP_CATALOG = {
     emoji: "🍓",
     tier: 4,
     minTownLevel: 3,
-    unlockCoinThreshold: 40,
-    cost: { coin: 14, herb: 2 },
+    unlockCoinThreshold: 95,
+    cost: { herb: 2, fish: 1 },
     stageTime: 15, // 45秒
-    rewardCoins: 34,
+    harvestAmount: 1,
     bonusResource: "fish",
-    bonusAmount: 2,
+    bonusAmount: 1,
   },
 };
 
@@ -131,60 +133,60 @@ const MAP_FARM_PLOTS = {
 
 const MAX_PLOTS_PER_CHAR = 2;
 
-// 収穫した作物ストック＋基本資源で作れる高付加価値の料理クラフトレシピ
+// 収穫・購入した作物＋基本資源でクラフトできる料理レシピ（完成品は所持品へ追加・取引板で売買）
 const COOKING_RECIPES = {
   carrot_salad: {
     id: "carrot_salad",
-    name: "新鮮キャロットサラダ",
+    name: "キャロットサラダ",
     emoji: "🥗",
+    tier: 1,
     crops: { carrot: 1 },
     resources: { herb: 1 },
-    rewardCoins: 9,
     desc: "採れたてニンジンと薬草の爽やかサラダ",
   },
   herb_bread: {
     id: "herb_bread",
-    name: "焼きたてハーブパン",
+    name: "ハーブパン",
     emoji: "🍞",
+    tier: 1,
     crops: { wheat: 1 },
     resources: { wood: 1, herb: 1 },
-    rewardCoins: 14,
     desc: "小麦と香草を薪窯で焼き上げた芳醇なパン",
   },
   tomato_soup: {
     id: "tomato_soup",
-    name: "彩りトマト魚介スープ",
+    name: "トマト魚介スープ",
     emoji: "🍲",
+    tier: 2,
     crops: { tomato: 1, cabbage: 1 },
     resources: { fish: 1 },
-    rewardCoins: 22,
     desc: "完熟トマトとキャベツ・鮮魚の特製スープ",
   },
   onigiri_bento: {
     id: "onigiri_bento",
-    name: "特製焼きおにぎり弁当",
+    name: "焼きおにぎり弁当",
     emoji: "🍱",
+    tier: 3,
     crops: { rice: 1, corn: 1 },
     resources: { fish: 1 },
-    rewardCoins: 30,
     desc: "ツヤツヤのお米と焼きトウモロコシ・焼き魚の弁当",
   },
   pumpkin_pie: {
     id: "pumpkin_pie",
-    name: "黄金パンプキンパイ",
+    name: "パンプキンパイ",
     emoji: "🥧",
+    tier: 4,
     crops: { pumpkin: 1, wheat: 1 },
     resources: { wood: 1 },
-    rewardCoins: 38,
     desc: "濃厚カボチャを贅沢に使った黄金色のパイ",
   },
   strawberry_tart: {
     id: "strawberry_tart",
-    name: "至高のストロベリータルト",
+    name: "ストロベリータルト",
     emoji: "🎂",
+    tier: 4,
     crops: { strawberry: 1, wheat: 1 },
     resources: { herb: 2 },
-    rewardCoins: 50,
     desc: "最高級イチゴをふんだんに飾った至高のスイーツ",
   },
 };
@@ -194,7 +196,6 @@ class FarmManager {
     this.plots = [];
     this.mapId = "central_plaza";
     this.selectedCropId = "carrot";
-    this.pantry = {};      // charId -> { carrot: 0, wheat: 0, ... }
     this.cookedCount = {}; // charId -> 料理作成回数
     this.onChange = null;
     this.onHarvest = null;
@@ -202,20 +203,22 @@ class FarmManager {
     this.initForMap("central_plaza", false);
   }
 
-  getPantry(charId) {
-    if (!this.pantry[charId]) {
-      this.pantry[charId] = {
-        carrot: 0, wheat: 0, cabbage: 0, tomato: 0,
-        corn: 0, rice: 0, pumpkin: 0, strawberry: 0,
-      };
+  // 所持品内の作物ストック一覧を返す
+  getCropStock(char) {
+    const stock = {};
+    for (const cropId of Object.keys(CROP_CATALOG)) {
+      stock[cropId] = char?.inventory?.[cropId] || 0;
     }
-    return this.pantry[charId];
+    return stock;
   }
 
-  addPantryCrop(charId, cropId, amount = 1) {
-    if (!charId || !CROP_CATALOG[cropId] || amount <= 0) return;
-    const p = this.getPantry(charId);
-    p[cropId] = (p[cropId] || 0) + amount;
+  // 所持品内の完成料理ストック一覧を返す
+  getDishStock(char) {
+    const stock = {};
+    for (const dishId of Object.keys(COOKING_RECIPES)) {
+      stock[dishId] = char?.inventory?.[dishId] || 0;
+    }
+    return stock;
   }
 
   getCookedCount(charId) {
@@ -226,10 +229,9 @@ class FarmManager {
     if (!char || !char.inventory) return { ok: false, reason: "キャラクターが不正です" };
     const recipe = COOKING_RECIPES[recipeId];
     if (!recipe) return { ok: false, reason: "不明なレシピです" };
-    const pantry = this.getPantry(char.id);
     for (const [cropId, need] of Object.entries(recipe.crops || {})) {
-      if ((pantry[cropId] || 0) < need) {
-        return { ok: false, reason: `収穫した${CROP_CATALOG[cropId]?.name || cropId}が足りません` };
+      if ((char.inventory[cropId] || 0) < need) {
+        return { ok: false, reason: `${CROP_CATALOG[cropId]?.name || cropId}が足りません` };
       }
     }
     if (!inventoryCanAfford(char.inventory, recipe.resources || {})) {
@@ -238,33 +240,39 @@ class FarmManager {
     return { ok: true, recipe };
   }
 
+  // 料理を作成して所持品へ追加する（固定コイン報酬なし：売却は取引板で行う）
   cookRecipe(char, recipeId) {
     const check = this.canCook(char, recipeId);
     if (!check.ok) return check;
     const recipe = check.recipe;
-    const pantry = this.getPantry(char.id);
 
-    if (!inventoryDeduct(char.inventory, recipe.resources || {})) {
-      return { ok: false, reason: "資源が足りません" };
-    }
+    const totalCost = { ...(recipe.resources || {}) };
     for (const [cropId, need] of Object.entries(recipe.crops || {})) {
-      pantry[cropId] = Math.max(0, (pantry[cropId] || 0) - need);
+      totalCost[cropId] = (totalCost[cropId] || 0) + need;
+    }
+    if (!inventoryDeduct(char.inventory, totalCost)) {
+      return { ok: false, reason: "食材または資源が足りません" };
     }
 
-    inventoryAdd(char.inventory, "coin", recipe.rewardCoins);
+    inventoryAdd(char.inventory, recipe.id, 1);
     this.cookedCount[char.id] = (this.cookedCount[char.id] || 0) + 1;
 
-    const result = { ok: true, recipe, rewardCoins: recipe.rewardCoins };
+    const result = { ok: true, recipe, dishId: recipe.id, dishAmount: 1 };
     if (this.onCook) this.onCook(char, result);
     if (this.onChange) this.onChange();
     return result;
   }
 
-  // AIライバル用：作れる中で最も報酬が高い料理を自動クラフト
-  tryAICook(char) {
+  // AIライバル用：作れる料理を市場価格（未成立時はティア順）を参考にクラフト
+  tryAICook(char, priceHistory = null) {
+    const scoreRecipe = (r) => {
+      const hist = priceHistory?.[r.id];
+      if (hist && hist.length > 0) return hist[hist.length - 1];
+      return (r.tier || 1) * 5;
+    };
     const available = Object.values(COOKING_RECIPES)
       .filter(r => this.canCook(char, r.id).ok)
-      .sort((a, b) => b.rewardCoins - a.rewardCoins);
+      .sort((a, b) => scoreRecipe(b) - scoreRecipe(a));
     if (!available.length) return null;
     const res = this.cookRecipe(char, available[0].id);
     return res.ok ? res : null;
@@ -342,7 +350,7 @@ class FarmManager {
       return { ok: false, reason: "空き農地がありません（ライバルが使用中）" };
     }
     if (!inventoryCanAfford(char.inventory, crop.cost)) {
-      return { ok: false, reason: "種まきに必要なコインまたは資源が足りません" };
+      return { ok: false, reason: "種まきに必要な資源が足りません" };
     }
     return { ok: true, crop };
   }
@@ -383,7 +391,8 @@ class FarmManager {
     return { ok: true, plot: targetPlot, crop };
   }
 
-  harvestPlot(plotId, harvester) {
+  // 収穫：固定コイン報酬なし。作物アイテムと副産物資源を所持品へ追加する
+  harvestPlot(plotId, harvester, harvestBonus = 0) {
     if (!harvester || !harvester.inventory) return { ok: false, reason: "キャラクターが不正です" };
     const plot = this.plots.find(p => p.id === plotId);
     if (!plot || !plot.cropId) return { ok: false, reason: "作物が植えられていません" };
@@ -395,17 +404,15 @@ class FarmManager {
     }
 
     const crop = CROP_CATALOG[plot.cropId];
-    const rewardCoins = crop?.rewardCoins || 5;
+    const harvestAmount = Math.max(1, (crop?.harvestAmount || 1) + Math.max(0, Math.floor(Number(harvestBonus) || 0)));
     const bonusResource = crop?.bonusResource || null;
     const bonusAmount = crop?.bonusAmount || 0;
 
-    inventoryAdd(harvester.inventory, "coin", rewardCoins);
+    if (crop) {
+      inventoryAdd(harvester.inventory, crop.id, harvestAmount);
+    }
     if (bonusResource && bonusAmount > 0) {
       inventoryAdd(harvester.inventory, bonusResource, bonusAmount);
-    }
-    // 収穫した作物を料理用パントリーにも +1 ストック
-    if (crop) {
-      this.addPantryCrop(harvester.id, crop.id, 1);
     }
 
     plot.ownerId = null;
@@ -420,7 +427,7 @@ class FarmManager {
       ok: true,
       plot,
       crop,
-      rewardCoins,
+      harvestAmount,
       bonusResource,
       bonusAmount,
     };
@@ -429,11 +436,11 @@ class FarmManager {
     return result;
   }
 
-  harvestAllRipeForChar(char) {
+  harvestAllRipeForChar(char, harvestBonus = 0) {
     const ripe = this.getRipePlotsByOwner(char.id);
     const results = [];
     for (const p of ripe) {
-      const res = this.harvestPlot(p.id, char);
+      const res = this.harvestPlot(p.id, char, harvestBonus);
       if (res.ok) results.push(res);
     }
     return results;
@@ -477,16 +484,16 @@ class FarmManager {
     return candidates[0]?.plot || null;
   }
 
-  // 栽培中の農地資産評価額（総資産ランキングに反映）
-  getFarmAssetValue(ownerId) {
+  // 栽培中の農地資産評価額（取引板の直近約定価格のみ参照・未約定なら0）
+  getFarmAssetValue(ownerId, priceHistory = null) {
     let value = 0;
     for (const p of this.plots) {
       if (p.ownerId !== ownerId || !p.cropId) continue;
-      const crop = CROP_CATALOG[p.cropId];
-      if (!crop) continue;
-      // 成長段階に応じて投資額〜収穫価値の 40%〜100% を資産計上
+      const hist = priceHistory?.[p.cropId];
+      const marketPrice = hist && hist.length > 0 ? hist[hist.length - 1] : 0;
+      if (marketPrice <= 0) continue;
       const stageFactor = [0.4, 0.6, 0.8, 1.0][p.stage] || 0.4;
-      value += crop.rewardCoins * stageFactor;
+      value += marketPrice * stageFactor;
     }
     return value;
   }
@@ -515,7 +522,6 @@ class FarmManager {
   serialize() {
     return {
       selectedCropId: this.selectedCropId,
-      pantry: JSON.parse(JSON.stringify(this.pantry || {})),
       cookedCount: { ...this.cookedCount },
       plots: this.plots.map(p => ({
         index: p.index,
@@ -535,14 +541,15 @@ class FarmManager {
     if (typeof data.selectedCropId === "string" && CROP_CATALOG[data.selectedCropId]) {
       this.selectedCropId = data.selectedCropId;
     }
+    // 旧セーブデータの pantry が残っていれば所持品へ安全に移行
     if (data.pantry && typeof data.pantry === "object") {
-      this.pantry = {};
       for (const [cid, items] of Object.entries(data.pantry)) {
-        const clean = this.getPantry(cid);
-        if (items && typeof items === "object") {
-          for (const cropKey of Object.keys(CROP_CATALOG)) {
-            const n = Math.floor(Number(items[cropKey]) || 0);
-            if (n >= 0) clean[cropKey] = n;
+        const owner = characters.find(c => c.id === cid);
+        if (!owner || !owner.inventory || !items || typeof items !== "object") continue;
+        for (const cropKey of Object.keys(CROP_CATALOG)) {
+          const n = Math.floor(Number(items[cropKey]) || 0);
+          if (n > 0 && !(owner.inventory[cropKey] > 0)) {
+            owner.inventory[cropKey] = n;
           }
         }
       }

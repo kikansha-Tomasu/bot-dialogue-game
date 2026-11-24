@@ -132,7 +132,7 @@ class TTSManager {
       return;
     }
     try {
-      this._ttsWorker = new Worker("js/hf-tts-worker.js?v=gh11", { type: "module" });
+      this._ttsWorker = new Worker("js/hf-tts-worker.js?v=gh12", { type: "module" });
       this.browserTtsLoading = true;
       this.browserTtsError = "";
       this._ttsWorker.onmessage = (event) => {

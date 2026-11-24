@@ -75,18 +75,6 @@ class Game {
       this.player.setSpeechBubble(`${item.icon} ${item.name}に着替えた！`);
     };
 
-    this.progression.onDividend = (coins, spec) => {
-      this.chatManager.addMessage({
-        senderId: "system",
-        senderName: `${spec.name} 配当`,
-        senderColor: "#7A5600",
-        recipientId: this.player.id,
-        recipientName: this.player.name,
-        text: `🏙 街の発展配当として 🪙×${coins} を受け取りました！`,
-        isAI: false,
-      });
-    };
-
     this.progression.onSeasonVictory = (winner, ranked) => {
       this.chatManager.addMessage({
         senderId: "system",
@@ -113,12 +101,9 @@ class Game {
         text: msg,
         isAI: executor.id !== "player",
       });
-      // プレイヤーが関与した約定では商人ボーナスを付与
+      // プレイヤーが関与した約定回数のみ記録（固定コインボーナスなし）
       if (executor.id === "player" || order.posterId === "player") {
-        const bonus = this.progression.onPlayerTradeExecuted();
-        if (bonus > 0) {
-          this.player.setSpeechBubble(`💰 商人ボーナス +🪙${bonus}`);
-        }
+        this.progression.onPlayerTradeExecuted();
       }
       syncLivePanels();
     };
@@ -423,15 +408,11 @@ class Game {
 
     const panel = document.getElementById("progression-panel");
     panel?.addEventListener("click", e => {
-      const questBtn = e.target.closest("[data-action='complete-quest']");
-      if (questBtn) {
-        const res = this.progression.completeActiveQuest();
-        if (res.ok) {
-          this._showProgressionStatus(`✅「${res.completed.title}」を納品し 🪙+${res.completed.rewardCoins} を獲得！`, true);
-          this.player.setSpeechBubble(`🎯 納品完了！ +🪙${res.completed.rewardCoins}`);
-        } else {
-          this._showProgressionStatus(`❌ ${res.reason}`, false);
-        }
+      const sellBtn = e.target.closest("[data-sell-item]");
+      if (sellBtn) {
+        const itemType = sellBtn.dataset.sellItem;
+        this._closeAllPanels("orderbook");
+        this.orderBook.openForSell(this.player, itemType);
         return;
       }
 
@@ -498,11 +479,12 @@ class Game {
       const harvestBtn = e.target.closest("[data-harvest-plot]");
       if (harvestBtn) {
         const plotId = harvestBtn.dataset.harvestPlot;
-        const res = this.farmManager.harvestPlot(plotId, this.player);
+        const harvestBonus = this.progression.getFarmHarvestBonus(this.player.id);
+        const res = this.farmManager.harvestPlot(plotId, this.player, harvestBonus);
         if (res.ok) {
-          const bonusStr = res.bonusResource ? ` と ${RESOURCE_EMOJI[res.bonusResource]}×${res.bonusAmount}` : "";
-          this._showProgressionStatus(`🌾「${res.crop.emoji}${res.crop.name}」を収穫し 🪙+${res.rewardCoins}${bonusStr} を獲得！`, true);
-          this.player.setSpeechBubble(`🌾 ${res.crop.emoji}収穫！ +🪙${res.rewardCoins}`);
+          const bonusStr = res.bonusResource ? ` ＋ ${RESOURCE_EMOJI[res.bonusResource]}×${res.bonusAmount}` : "";
+          this._showProgressionStatus(`🌾「${res.crop.emoji}${res.crop.name}」×${res.harvestAmount}${bonusStr} を収穫！（売るには取引板へ）`, true);
+          this.player.setSpeechBubble(`🌾 ${res.crop.emoji}×${res.harvestAmount}収穫！`);
         } else {
           this._showProgressionStatus(`❌ ${res.reason}`, false);
         }
@@ -511,11 +493,12 @@ class Game {
 
       const harvestAllBtn = e.target.closest("[data-action='harvest-all']");
       if (harvestAllBtn) {
-        const list = this.farmManager.harvestAllRipeForChar(this.player);
+        const harvestBonus = this.progression.getFarmHarvestBonus(this.player.id);
+        const list = this.farmManager.harvestAllRipeForChar(this.player, harvestBonus);
         if (list.length > 0) {
-          const coins = list.reduce((s, r) => s + r.rewardCoins, 0);
-          this._showProgressionStatus(`🌾 ${list.length}区画を一括収穫し 🪙+${coins} を獲得しました！`, true);
-          this.player.setSpeechBubble(`🌾 一括収穫！ +🪙${coins}`);
+          const summary = list.map(r => `${r.crop.emoji}×${r.harvestAmount}`).join(" ");
+          this._showProgressionStatus(`🌾 ${list.length}区画を収穫（${summary}）！売るには取引板へ出品できます`, true);
+          this.player.setSpeechBubble(`🌾 一括収穫！ ${summary}`);
         }
         return;
       }
@@ -525,12 +508,19 @@ class Game {
         const recipeId = cookBtn.dataset.cookRecipe;
         const res = this.farmManager.cookRecipe(this.player, recipeId);
         if (res.ok) {
-          this._showProgressionStatus(`🍳「${res.recipe.emoji}${res.recipe.name}」を調理・出品し 🪙+${res.rewardCoins} を獲得！`, true);
-          this.player.setSpeechBubble(`🍳 ${res.recipe.emoji}${res.recipe.name}完成！ +🪙${res.rewardCoins}`);
+          this._showProgressionStatus(`🍳「${res.recipe.emoji}${res.recipe.name}」を作成！取引板に注文を出して売却できます`, true);
+          this.player.setSpeechBubble(`🍳 ${res.recipe.emoji}${res.recipe.name}完成！`);
         } else {
           this._showProgressionStatus(`❌ ${res.reason}`, false);
         }
       }
+    });
+
+    document.getElementById("inventory-panel")?.addEventListener("click", e => {
+      const sellBtn = e.target.closest("[data-sell-item]");
+      if (!sellBtn) return;
+      this._closeAllPanels("orderbook");
+      this.orderBook.openForSell(this.player, sellBtn.dataset.sellItem);
     });
 
     document.getElementById("victory-close")?.addEventListener("click", () => {
@@ -599,25 +589,19 @@ class Game {
       .join(" ");
   }
 
+  _formatMarketPriceTag(itemType) {
+    const hist = this.orderBook?.priceHistory?.[itemType];
+    if (hist && hist.length > 0) {
+      const latest = hist[hist.length - 1];
+      return `相場: 🪙${latest.toFixed(1).replace(/\.0$/, "")}`;
+    }
+    return "相場: 未成立";
+  }
+
   _renderProgressionPanel() {
     const titleEl = document.getElementById("player-title-badge");
     if (titleEl) titleEl.textContent = this.progression.getTitle();
 
-    // 1. 常時表示の納品依頼バナー
-    const questEl = document.getElementById("quest-banner");
-    const q = this.progression.activeQuest;
-    if (questEl && q) {
-      const canComplete = inventoryCanAfford(this.player.inventory, q.cost);
-      questEl.innerHTML = `
-        <div class="quest-info">
-          <div class="quest-title">🎯 街の依頼：${q.title} <span class="quest-count">（達成 ${this.progression.completedQuestsCount}回）</span></div>
-          <div class="quest-reqs">納品: ${this._renderCostChips(q.cost)} → <span class="quest-reward">報酬 🪙+${q.rewardCoins}</span></div>
-        </div>
-        <button type="button" class="prog-action-btn${canComplete ? " is-ready" : ""}" data-action="complete-quest" ${canComplete ? "" : "disabled"}>納品する</button>
-      `;
-    }
-
-    // 2. タブ本体
     const bodyEl = document.getElementById("progression-body");
     if (!bodyEl) return;
 
@@ -630,6 +614,10 @@ class Game {
       let nextHtml = "";
       if (next) {
         const canUp = inventoryCanAfford(this.player.inventory, next.cost);
+        const needCoins = (this.player.inventory.coin || 0) < (next.cost.coin || 0);
+        const shortageLabel = needCoins
+          ? "コイン不足（取引板で売却して獲得）"
+          : "資源が不足しています";
         nextHtml = `
           <div class="prog-card prog-next-card">
             <div class="prog-card-head">
@@ -639,7 +627,7 @@ class Game {
             <div class="prog-effect">✨ 特典：${next.effectSummary}</div>
             <div class="prog-cost-row">必要コスト：${this._renderCostChips(next.cost)}</div>
             <button type="button" class="prog-primary-btn${canUp ? " is-ready" : ""}" data-action="upgrade-town" ${canUp ? "" : "disabled"}>
-              ${canUp ? `✨ Lv.${next.level} へ街を発展させる！` : "コイン・資源が不足しています"}
+              ${canUp ? `✨ Lv.${next.level} へ街を発展させる！` : shortageLabel}
             </button>
           </div>`;
       } else {
@@ -658,9 +646,10 @@ class Game {
           </div>
           <div class="prog-bar-track"><div class="prog-bar-fill" style="width:${pct}%"></div></div>
           <div class="prog-stats-row">
-            <span>定期配当: <b>🪙+${cur.dividendCoins}/60秒</b></span>
             <span>採集量: <b>×${this.progression.getPlayerGatherAmount()}</b></span>
             <span>建物速度: <b>${Math.round(this.progression.getBuildingSpeedMultiplier(this.player.id) * 100)}%</b></span>
+            <span>農地速度: <b>${Math.round(this.progression.getFarmSpeedMultiplier(this.player.id) * 100)}%</b></span>
+            <span>取引約定: <b>${this.progression.totalTradesCompleted}回</b></span>
           </div>
         </div>
         ${nextHtml}
@@ -673,6 +662,7 @@ class Game {
       const ripeCount = this.farmManager.getRipePlotsByOwner(this.player.id).length;
       const emptyCount = this.farmManager.getEmptyPlots().length;
       const townLv = this.progression.townLevel;
+      const harvestBonus = this.progression.getFarmHarvestBonus(this.player.id);
 
       const myPlotsHtml = myPlots.length > 0
         ? `<div class="farm-my-plots">` + myPlots.map(p => {
@@ -690,7 +680,15 @@ class Game {
               </button>
             </div>`;
           }).join("") + `</div>`
-        : `<div class="prog-desc">現在栽培中の農地はありません。下のカタログから種をまきましょう！（マップ上の自分の畑の近くで <kbd>E</kbd> キーでも収穫できます）</div>`;
+        : `<div class="prog-desc">栽培中の農地はありません。下の作物から種をまきましょう（<kbd>E</kbd> キーでも収穫できます）</div>`;
+
+      const cropStock = this.farmManager.getCropStock(this.player);
+      const stockChips = Object.entries(cropStock)
+        .filter(([, cnt]) => cnt > 0)
+        .map(([cid, cnt]) => {
+          const c = CROP_CATALOG[cid];
+          return `<button type="button" class="pantry-chip-btn" data-sell-item="${cid}" title="取引板に売り注文を出す">${c.emoji}${c.name}×${cnt} <span class="pantry-chip-sell">📋売る</span></button>`;
+        }).join("");
 
       const rivalPlots = this.farmManager.plots.filter(p => p.cropId && p.ownerId !== this.player.id);
       const rivalHtml = rivalPlots.length > 0
@@ -698,11 +696,12 @@ class Game {
             const c = CROP_CATALOG[p.cropId];
             return `<span class="rival-farm-chip" style="border-color:${p.ownerColor}">${p.ownerName}: ${c.emoji}${c.name} (Stage ${p.stage}/3)</span>`;
           }).join("")
-        : `<span>まだライバルの畑はありません（空き農地を先に確保するチャンス！）</span>`;
+        : `<span>まだライバルの畑はありません</span>`;
 
       const cropsHtml = Object.values(CROP_CATALOG).map(crop => {
         const unlocked = this.farmManager.isCropUnlocked(crop.id, this.player, townLv);
         const check = this.farmManager.canPlant(this.player, crop.id, townLv);
+        const yieldQty = (crop.harvestAmount || 1) + harvestBonus;
         const bonusStr = crop.bonusResource
           ? ` + ${RESOURCE_EMOJI[crop.bonusResource]}×${crop.bonusAmount}`
           : "";
@@ -714,7 +713,7 @@ class Game {
               ? "区画上限(2/2)"
               : emptyCount === 0
                 ? "空き農地なし"
-                : "資源・コイン不足";
+                : "資源不足";
 
         return `<div class="crop-card${unlocked ? "" : " is-locked"}">
           <div class="crop-card-top">
@@ -724,7 +723,8 @@ class Game {
               <div class="crop-time">成長: 約${crop.stageTime * 3}秒（3段階）</div>
             </div>
           </div>
-          <div class="crop-reward">収穫: 🪙+${crop.rewardCoins}${bonusStr}</div>
+          <div class="crop-reward">収穫: ${crop.emoji}×${yieldQty}${bonusStr}</div>
+          <div class="market-hint">${this._formatMarketPriceTag(crop.id)}</div>
           <div class="prog-cost-row">種代: ${this._renderCostChips(crop.cost)}</div>
           <button type="button" class="prog-action-btn${check.ok ? " is-ready" : ""}" data-plant-crop="${crop.id}" ${check.ok ? "" : "disabled"}>
             ${lockLabel}
@@ -741,6 +741,10 @@ class Game {
           ${myPlotsHtml}
           ${ripeCount > 1 ? `<button type="button" class="prog-primary-btn is-ready" data-action="harvest-all">🌾 収穫可能な ${ripeCount}区画 を一括収穫する</button>` : ""}
         </div>
+        <div class="pantry-strip">
+          <b>🧺 収穫作物:</b>
+          ${stockChips || `<span class="inv-char-empty">所持なし</span>`}
+        </div>
         <div class="farm-rival-strip">
           <b>⚔️ ライバルの農地:</b> ${rivalHtml}
         </div>
@@ -750,16 +754,30 @@ class Game {
     }
 
     if (tab === "cooking") {
-      const pantry = this.farmManager.getPantry(this.player.id);
-      const pantryItems = Object.entries(pantry)
+      const cropStock = this.farmManager.getCropStock(this.player);
+      const dishStock = this.farmManager.getDishStock(this.player);
+
+      const pantryItems = Object.entries(cropStock)
         .filter(([, cnt]) => cnt > 0)
-        .map(([cid, cnt]) => `<span class="pantry-chip">${CROP_CATALOG[cid]?.emoji || "🌱"}${CROP_CATALOG[cid]?.name || cid}×${cnt}</span>`)
+        .map(([cid, cnt]) => {
+          const c = CROP_CATALOG[cid];
+          return `<button type="button" class="pantry-chip-btn" data-sell-item="${cid}" title="取引板で売る">${c.emoji}${c.name}×${cnt} <span class="pantry-chip-sell">📋売る</span></button>`;
+        })
+        .join("");
+
+      const dishItems = Object.entries(dishStock)
+        .filter(([, cnt]) => cnt > 0)
+        .map(([did, cnt]) => {
+          const r = COOKING_RECIPES[did];
+          return `<button type="button" class="pantry-chip-btn" data-sell-item="${did}" title="取引板に売り注文を出す">${r.emoji}${r.name}×${cnt} <span class="pantry-chip-sell">📋板で売る</span></button>`;
+        })
         .join("");
 
       const recipesHtml = Object.values(COOKING_RECIPES).map(r => {
         const check = this.farmManager.canCook(this.player, r.id);
+        const ownedDish = dishStock[r.id] || 0;
         const cropChips = Object.entries(r.crops || {}).map(([cid, need]) => {
-          const have = pantry[cid] || 0;
+          const have = cropStock[cid] || 0;
           const ok = have >= need;
           const c = CROP_CATALOG[cid];
           return `<span class="cost-chip ${ok ? "cost-ok" : "cost-short"}">${c.emoji}${c.name} ${have}/${need}</span>`;
@@ -769,18 +787,25 @@ class Game {
         return `<div class="recipe-card">
           <div class="recipe-title">${r.emoji} ${r.name}</div>
           <div class="recipe-desc">${r.desc}</div>
-          <div class="crop-reward">売上報酬: 🪙+${r.rewardCoins}</div>
+          <div class="market-hint">${this._formatMarketPriceTag(r.id)}</div>
           <div class="prog-cost-row">食材: ${cropChips} ${resChips}</div>
-          <button type="button" class="prog-action-btn${check.ok ? " is-ready" : ""}" data-cook-recipe="${r.id}" ${check.ok ? "" : "disabled"}>
-            ${check.ok ? `🍳 調理して出品 (+🪙${r.rewardCoins})` : "食材・資源不足"}
-          </button>
+          <div class="recipe-actions">
+            <button type="button" class="prog-action-btn${check.ok ? " is-ready" : ""}" data-cook-recipe="${r.id}" ${check.ok ? "" : "disabled"}>
+              ${check.ok ? "🍳 調理する" : "食材不足"}
+            </button>
+            ${ownedDish > 0 ? `<button type="button" class="prog-action-btn prog-sell-btn" data-sell-item="${r.id}">📋 売る(×${ownedDish})</button>` : ""}
+          </div>
         </div>`;
       }).join("");
 
       bodyEl.innerHTML = `
         <div class="pantry-strip">
-          <b>🧺 収穫食材ストック（畑の収穫で+1個貯まります）:</b>
-          ${pantryItems || `<span class="inv-char-empty">まだ収穫した作物がありません（🌾農業タブで種まき＆収穫しよう）</span>`}
+          <b>🍽 完成料理:</b>
+          ${dishItems || `<span class="inv-char-empty">所持なし</span>`}
+        </div>
+        <div class="pantry-strip">
+          <b>🧺 食材:</b>
+          ${pantryItems || `<span class="inv-char-empty">なし（🌾農業で収穫 / 📋取引板で購入）</span>`}
         </div>
         <div class="recipe-grid">${recipesHtml}</div>
       `;
@@ -842,12 +867,10 @@ class Game {
       badge.title = `街の発展：Lv.${spec.level}「${spec.name}」— クリックで発展＆ショップを開く (U)`;
     }
     if (progBtn) {
-      const questReady = this.progression.activeQuest &&
-        inventoryCanAfford(this.player.inventory, this.progression.activeQuest.cost);
       const nextTown = this.progression.getNextTownSpec();
       const townReady = nextTown && inventoryCanAfford(this.player.inventory, nextTown.cost);
       const ripeReady = this.farmManager.getRipePlotsByOwner(this.player.id).length > 0;
-      progBtn.classList.toggle("has-ready-action", Boolean(questReady || townReady || ripeReady));
+      progBtn.classList.toggle("has-ready-action", Boolean(townReady || ripeReady));
     }
   }
 
@@ -1334,7 +1357,7 @@ class Game {
       .map(char => {
         const buildings = this.buildingManager.getBuildingsByOwner(char.id).length;
         const farms = this.farmManager.getPlotsByOwner(char.id).length;
-        const farmValue = this.farmManager.getFarmAssetValue(char.id);
+        const farmValue = this.farmManager.getFarmAssetValue(char.id, this.orderBook.priceHistory);
         const asset = computeAssetValue(char.inventory, this.orderBook.priceHistory, {
           farmValue,
           buildingCount: buildings,
@@ -1372,7 +1395,14 @@ class Game {
     content.innerHTML = winnerBanner + ranked.map(({ char, asset, buildings, farms }, idx) => {
       const items = Object.entries(char.inventory)
         .filter(([, v]) => v > 0)
-        .map(([k, v]) => `<span class="inv-chip">${RESOURCE_EMOJI[k]} ${RESOURCE_LABEL[k]}×${v}</span>`)
+        .map(([k, v]) => {
+          const emoji = RESOURCE_EMOJI[k] || "";
+          const label = RESOURCE_LABEL[k] || k;
+          if (char.isPlayer && k !== "coin") {
+            return `<button type="button" class="inv-chip inv-sell-chip" data-sell-item="${k}" title="取引板に売り注文を出す">${emoji} ${label}×${v}</button>`;
+          }
+          return `<span class="inv-chip">${emoji} ${label}×${v}</span>`;
+        })
         .join("");
       const safeColor = /^#[0-9a-fA-F]{3,8}$/.test(char.color || "") ? char.color : "#555";
       const buildingTag = buildings > 0 ? `<span class="inv-building-tag">🏠 ${buildings}棟</span>` : "";
@@ -1630,10 +1660,11 @@ class Game {
       map?.height || 10
     );
     if (ripePlot) {
-      const res = this.farmManager.harvestPlot(ripePlot.id, this.player);
+      const harvestBonus = this.progression.getFarmHarvestBonus(this.player.id);
+      const res = this.farmManager.harvestPlot(ripePlot.id, this.player, harvestBonus);
       if (res.ok) {
         const bonusStr = res.bonusResource ? ` +${RESOURCE_EMOJI[res.bonusResource]}${res.bonusAmount}` : "";
-        this.player.setSpeechBubble(`🌾 ${res.crop.emoji}${res.crop.name}収穫！ +🪙${res.rewardCoins}${bonusStr}`);
+        this.player.setSpeechBubble(`🌾 ${res.crop.emoji}×${res.harvestAmount}収穫！${bonusStr}`);
         this.gatherCooldown = GAME_CONFIG.gatherCooldown * this.progression.getPlayerGatherCooldownMultiplier();
         this._updateTownHudBadge();
         this._scheduleSave();

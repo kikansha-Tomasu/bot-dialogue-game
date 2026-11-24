@@ -99,7 +99,7 @@ class HuggingFaceClient {
       return;
     }
     try {
-      this._worker = new Worker("js/hf-browser-worker.js?v=gh11", { type: "module" });
+      this._worker = new Worker("js/hf-browser-worker.js?v=gh12", { type: "module" });
       this._workerLoading = true;
       this._workerError = "";
       this._workerStage = "connecting";
@@ -467,6 +467,7 @@ class HuggingFaceClient {
 
 あなたは今、次に何をするか決めようとしています。
 **他のキャラクター（Player含む）は全員ライバルです。目標: 総資産ランキングでライバル全員を上回り1位になること。**
+**重要ルール: コインは取引板での売買成立によってのみ増えます。作物や料理も収穫・調理しただけではコインにならないため、売りたい場合は取引板に注文を出して売ってください。**
 
 状況を踏まえ、以下の形式で次の行動を**1回だけ**出力してください。説明不要。
 
@@ -475,7 +476,7 @@ PLAN: gather
 RESOURCE: wood または stone または herb または fish
 MESSAGE: @${nearestName} （採集後にライバルへ言う一文。キャラの個性で自然に）
 
-農業（種まき・収穫）をする場合：
+農業（種まき・収穫・料理）をする場合：
 PLAN: farm
 CROP: carrot または wheat または cabbage または tomato または corn または rice または pumpkin または strawberry
 MESSAGE: @${nearestName} （農業・収穫についてライバルへ言う一文。キャラの個性で自然に）
@@ -483,7 +484,7 @@ MESSAGE: @${nearestName} （農業・収穫についてライバルへ言う一�
 取引する場合：
 PLAN: trade
 ACTION: sell または buy または execute または skip
-RESOURCE: wood または stone または herb または fish
+RESOURCE: 資源(wood/stone/herb/fish)・作物(carrot/wheat/cabbage/tomato/corn/rice/pumpkin/strawberry)・料理(carrot_salad/herb_bread/tomato_soup/onigiri_bento/pumpkin_pie/strawberry_tart)のいずれか
 AMOUNT: 数量（整数）
 COINS: コイン数（整数）
 MESSAGE: @${nearestName} （取引を知らせる一文。キャラの個性で自然に）

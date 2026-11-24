@@ -805,13 +805,78 @@ select:focus-visible {
   width: 490px;
 }
 
-/* ─── Resource Filter Tabs ─── */
+/* ─── Order Book Category & Item Filter Tabs ─── */
+#orderbook-cat-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 6px 8px 4px;
+  background: var(--c-inputAreaBg);
+  border-bottom: 1px solid var(--c-msgBorder);
+  flex-shrink: 0;
+}
+
+.cat-tab-btn {
+  flex: 1;
+  padding: 5px 6px;
+  border: 1px solid var(--c-inputBorder);
+  border-radius: 5px;
+  background: var(--c-panelBg);
+  color: var(--c-timeText);
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.cat-tab-btn.active {
+  background: var(--c-sendBtnBg);
+  color: var(--c-sendBtnText);
+  border-color: var(--c-sendBtnBg);
+}
+
+.cat-tab-btn:hover:not(.active) {
+  color: var(--c-msgText);
+  border-color: var(--c-inputFocus);
+}
+
+.cat-order-cnt {
+  font-size: 10px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.24);
+  color: inherit;
+}
+
+.cat-tab-btn:not(.active) .cat-order-cnt {
+  background: rgba(196, 138, 0, 0.18);
+  color: var(--c-goldText);
+}
+
 #resource-tabs {
   display: flex;
   gap: 2px;
-  padding: 6px 8px 0;
+  padding: 5px 8px 0;
   border-bottom: 1px solid var(--c-msgBorder);
   flex-shrink: 0;
+}
+
+#resource-tabs.is-grid-4,
+#resource-tabs.is-grid-3 {
+  display: grid;
+  gap: 4px;
+  padding: 6px 8px;
+}
+
+#resource-tabs.is-grid-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+#resource-tabs.is-grid-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .resource-tab-btn {
@@ -824,9 +889,29 @@ select:focus-visible {
   font-size: 11.5px;
   font-weight: 600;
   cursor: pointer;
-  transition: color 0.15s, border-color 0.15s;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
   white-space: nowrap;
   font-family: 'Segoe UI', 'Meiryo', sans-serif;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+}
+
+#resource-tabs.is-grid-4 .resource-tab-btn,
+#resource-tabs.is-grid-3 .resource-tab-btn {
+  padding: 4px 5px;
+  border: 1px solid var(--c-msgBorder);
+  border-radius: 5px;
+  background: var(--c-inputBg);
+  font-size: 11px;
+}
+
+#resource-tabs.is-grid-4 .resource-tab-btn.active,
+#resource-tabs.is-grid-3 .resource-tab-btn.active {
+  background: var(--c-playerMsgBg);
+  border-color: var(--c-inputFocus);
+  color: var(--c-msgText);
 }
 
 .resource-tab-btn.active {
@@ -835,6 +920,20 @@ select:focus-visible {
 }
 
 .resource-tab-btn:hover:not(.active) { color: var(--c-msgText); }
+
+.tab-owned {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--c-successText);
+}
+
+.tab-order-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--c-inputFocus);
+  flex-shrink: 0;
+}
 
 /* ─── Price Chart & Technical Indicators (非重なりレイアウト) ─── */
 #price-chart-section {
@@ -1216,45 +1315,6 @@ select:focus-visible {
   color: var(--c-goldText);
 }
 
-#quest-banner {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 9px 14px;
-  background: #FFF6DC;
-  border-bottom: 1.5px solid var(--c-msgBorder);
-  flex-shrink: 0;
-}
-
-.quest-info { flex: 1; min-width: 0; }
-
-.quest-title {
-  font-size: 12.5px;
-  font-weight: 700;
-  color: var(--c-msgText);
-  margin-bottom: 4px;
-}
-
-.quest-count {
-  font-size: 11px;
-  font-weight: 400;
-  color: var(--c-timeText);
-}
-
-.quest-reqs {
-  font-size: 11.5px;
-  color: var(--c-msgText);
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 5px;
-}
-
-.quest-reward {
-  font-weight: 700;
-  color: var(--c-goldText);
-}
-
 #prog-tabs {
   display: flex;
   border-bottom: 1px solid var(--c-msgBorder);
@@ -1608,6 +1668,73 @@ select:focus-visible {
   background: var(--c-panelBg);
   border: 1px solid var(--c-msgBorder);
   font-weight: 700;
+}
+
+.pantry-chip-btn {
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--c-panelBg);
+  border: 1px solid var(--c-inputFocus);
+  color: var(--c-msgText);
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: background 0.15s, color 0.15s;
+}
+
+.pantry-chip-btn:hover {
+  background: var(--c-sendBtnBg);
+  color: var(--c-sendBtnText);
+  border-color: var(--c-sendBtnBg);
+}
+
+.pantry-chip-sell {
+  font-size: 10px;
+  opacity: 0.85;
+}
+
+.market-hint {
+  font-size: 11px;
+  color: var(--c-goldText);
+  font-weight: 600;
+}
+
+.recipe-actions {
+  display: flex;
+  gap: 5px;
+  margin-top: auto;
+}
+
+.recipe-actions .prog-action-btn {
+  flex: 1;
+  padding: 6px 6px;
+  font-size: 11.5px;
+}
+
+.prog-sell-btn {
+  background: #FFF6DC;
+  color: var(--c-goldText);
+  border: 1px solid rgba(196, 138, 0, 0.55);
+}
+
+.prog-sell-btn:hover {
+  background: var(--c-inputFocus);
+  color: #fff;
+}
+
+.inv-sell-chip {
+  cursor: pointer;
+  font: inherit;
+  border: 1px solid var(--c-inputBorder);
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.inv-sell-chip:hover {
+  background: #FFF6DC;
+  border-color: var(--c-inputFocus);
 }
 
 .recipe-grid {

@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Bot対話ゲーム</title>
-  <script src="colors.js?v=gh11"></script>
-  <link rel="stylesheet" href="css/style.css?v=gh11">
+  <script src="colors.js?v=gh12"></script>
+  <link rel="stylesheet" href="css/style.css?v=gh12">
 </head>
 <body>
 
@@ -32,8 +32,13 @@
         <button id="orderbook-close" type="button" class="modal-close" aria-label="取引板を閉じる">✕</button>
       </div>
 
-      <!-- 資源タブ -->
-      <div id="resource-tabs" role="tablist" aria-label="資源カテゴリ">
+      <!-- 品目カテゴリ＆商品タブ -->
+      <div id="orderbook-cat-tabs" role="tablist" aria-label="取引カテゴリ">
+        <button type="button" class="cat-tab-btn active" data-cat="resource" role="tab" aria-selected="true">⛏ 資源</button>
+        <button type="button" class="cat-tab-btn" data-cat="crop" role="tab" aria-selected="false">🌾 作物</button>
+        <button type="button" class="cat-tab-btn" data-cat="dish" role="tab" aria-selected="false">🍳 料理</button>
+      </div>
+      <div id="resource-tabs" role="tablist" aria-label="取引品目">
         <button type="button" class="resource-tab-btn active" data-resource="wood" role="tab" aria-selected="true">🪵 木材</button>
         <button type="button" class="resource-tab-btn" data-resource="stone" role="tab" aria-selected="false">🪨 石</button>
         <button type="button" class="resource-tab-btn" data-resource="herb" role="tab" aria-selected="false">🌿 薬草</button>
@@ -160,9 +165,6 @@
         <button id="progression-close" type="button" class="modal-close" aria-label="街の発展メニューを閉じる">✕</button>
       </div>
 
-      <!-- 街の納品依頼（資源→コイン獲得） -->
-      <div id="quest-banner"></div>
-
       <!-- タブ切替 -->
       <div id="prog-tabs" role="tablist" aria-label="発展カテゴリ">
         <button type="button" class="prog-tab-btn active" data-ptab="town" role="tab" aria-selected="true">🏙 街の発展</button>
@@ -227,7 +229,7 @@
       <div id="action-buttons">
         <button id="btn-gather"      type="button" title="近くの資源を採集 (E)">⛏ 採集 <kbd>E</kbd></button>
         <button id="btn-build"       type="button" title="建築メニューを開く (B)">🏗 建築 <kbd>B</kbd></button>
-        <button id="btn-progression" type="button" title="街の発展・依頼・ショップを開く (U)">✨ 街発展 <kbd>U</kbd></button>
+        <button id="btn-progression" type="button" title="街の発展・農業・料理・強化を開く (U)">✨ 街発展 <kbd>U</kbd></button>
         <button id="btn-inventory"   type="button" title="インベントリを開く (I)">📦 所持品 <kbd>I</kbd></button>
         <button id="btn-orderbook"   type="button" title="取引板を開く (T)">📋 取引板 <kbd>T</kbd></button>
       </div>
@@ -277,22 +279,22 @@
 </div>
 
 <!-- スクリプト読み込み順序が重要 -->
-<script src="js/config.js?v=gh11"></script>
-<script src="js/resources.js?v=gh11"></script>
-<script src="js/inventory.js?v=gh11"></script>
-<script src="js/buildings.js?v=gh11"></script>
-<script src="js/trade.js?v=gh11"></script>
-<script src="js/pathfinding.js?v=gh11"></script>
-<script src="js/farming.js?v=gh11"></script>
-<script src="js/progression.js?v=gh11"></script>
-<script src="js/storage.js?v=gh11"></script>
-<script src="js/characters.js?v=gh11"></script>
-<script src="js/map.js?v=gh11"></script>
-<script src="js/chat.js?v=gh11"></script>
-<script src="js/api.js?v=gh11"></script>
-<script src="js/tts.js?v=gh11"></script>
-<script src="js/ai-brain.js?v=gh11"></script>
-<script src="js/game.js?v=gh11"></script>
+<script src="js/config.js?v=gh12"></script>
+<script src="js/resources.js?v=gh12"></script>
+<script src="js/inventory.js?v=gh12"></script>
+<script src="js/buildings.js?v=gh12"></script>
+<script src="js/trade.js?v=gh12"></script>
+<script src="js/pathfinding.js?v=gh12"></script>
+<script src="js/farming.js?v=gh12"></script>
+<script src="js/progression.js?v=gh12"></script>
+<script src="js/storage.js?v=gh12"></script>
+<script src="js/characters.js?v=gh12"></script>
+<script src="js/map.js?v=gh12"></script>
+<script src="js/chat.js?v=gh12"></script>
+<script src="js/api.js?v=gh12"></script>
+<script src="js/tts.js?v=gh12"></script>
+<script src="js/ai-brain.js?v=gh12"></script>
+<script src="js/game.js?v=gh12"></script>
 
 </body>
 </html>

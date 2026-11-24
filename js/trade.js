@@ -1,4 +1,6 @@
-const TRADE_RESOURCES = ["wood", "stone", "herb", "fish"];
+const TRADE_RESOURCES = typeof TRADABLE_ITEM_TYPES !== "undefined"
+  ? [...TRADABLE_ITEM_TYPES]
+  : ["wood", "stone", "herb", "fish"];
 
 class OrderBook {
   constructor() {
@@ -11,15 +13,23 @@ class OrderBook {
     this.onExecute   = null;
     this.onChange    = null;
 
+    this._activeCategory = "resource";
     this._activeResource = "wood";
     this._activeIndicators = new Set(["ma5", "ma10"]);
-    this.priceHistory = { wood: [], stone: [], herb: [], fish: [] };
+    this.priceHistory = {};
+    for (const item of TRADE_RESOURCES) {
+      this.priceHistory[item] = [];
+    }
     this.tradeHistory = [];
 
     if (typeof document !== "undefined") {
       this._panel = document.getElementById("orderbook-panel");
       this._list  = document.getElementById("orderbook-list");
-      if (this._panel) this._setupHandlers();
+      if (this._panel) {
+        this._populateItemSelects();
+        this._setupHandlers();
+        this._renderCategoryAndItemTabs();
+      }
     } else {
       this._panel = null;
       this._list  = null;
@@ -33,10 +43,68 @@ class OrderBook {
     this.isOpen  = true;
     this.pruneInvalidOrders();
     this._panel?.classList.remove("hidden");
+    this._renderCategoryAndItemTabs();
     this._renderList();
     this._renderChart();
     this._refreshMarketRate();
     this._refreshLimitPreview();
+  }
+
+  // 農業・料理・所持品から1クリックで「売り指値」フォームを開く（価格はプレイヤーが自由に設定）
+  openForSell(player, itemType) {
+    if (!TRADE_RESOURCES.includes(itemType)) {
+      this.open(player);
+      return;
+    }
+    this._player = player;
+    this.isOpen  = true;
+    this._activeCategory = this._getCategoryForItem(itemType);
+    this._activeResource = itemType;
+    this._activeTab = "limit";
+    this.pruneInvalidOrders();
+
+    if (typeof document !== "undefined") {
+      this._panel?.classList.remove("hidden");
+      document.querySelectorAll(".tab-btn").forEach(b => {
+        const active = b.dataset.tab === "limit";
+        b.classList.toggle("active", active);
+        b.setAttribute("aria-selected", String(active));
+      });
+      document.getElementById("tab-limit")?.classList.remove("hidden");
+      document.getElementById("tab-market")?.classList.add("hidden");
+
+      const pSell = document.getElementById("post-sell-type");
+      const pBuy  = document.getElementById("post-buy-type");
+      const pSellAmt = document.getElementById("post-sell-amount");
+      const pBuyAmt  = document.getElementById("post-buy-amount");
+      if (pSell) pSell.value = itemType;
+      if (pBuy)  pBuy.value  = "coin";
+      if (pSellAmt) pSellAmt.value = "1";
+      if (pBuyAmt) {
+        const hist = this.priceHistory[itemType];
+        const bestBid = this.getBestBid(itemType, player?.id);
+        const suggested = hist && hist.length > 0
+          ? Math.max(1, Math.round(hist[hist.length - 1]))
+          : bestBid
+            ? Math.max(1, Math.round(bestBid.unitPrice))
+            : 3;
+        pBuyAmt.value = String(suggested);
+      }
+      const mBuy  = document.getElementById("market-buy-type");
+      const mSell = document.getElementById("market-sell-type");
+      if (mBuy)  mBuy.value  = itemType;
+      if (mSell) mSell.value = itemType;
+
+      this._renderCategoryAndItemTabs();
+      this._renderList();
+      this._renderChart();
+      this._refreshMarketRate();
+      this._refreshLimitPreview();
+      if (pBuyAmt) {
+        pBuyAmt.focus();
+        pBuyAmt.select();
+      }
+    }
   }
 
   close() {
@@ -47,6 +115,7 @@ class OrderBook {
   refresh() {
     this.pruneInvalidOrders();
     if (this.isOpen) {
+      this._renderCategoryAndItemTabs();
       this._renderList();
       this._renderChart();
       this._refreshMarketRate();
@@ -126,6 +195,7 @@ class OrderBook {
     this._tryMatchOrders(order);
     if (this.onChange) this.onChange();
     if (this.isOpen) {
+      this._renderCategoryAndItemTabs();
       this._renderList();
       this._renderChart();
       this._refreshMarketRate();
@@ -209,6 +279,7 @@ class OrderBook {
     this.pruneInvalidOrders();
     if (this.onChange) this.onChange();
     if (this.isOpen) {
+      this._renderCategoryAndItemTabs();
       this._renderList();
       this._renderChart();
       this._refreshMarketRate();
@@ -224,6 +295,7 @@ class OrderBook {
     this.orders.splice(idx, 1);
     if (this.onChange) this.onChange();
     if (this.isOpen) {
+      this._renderCategoryAndItemTabs();
       this._renderList();
       this._renderChart();
       this._refreshMarketRate();
@@ -379,6 +451,7 @@ class OrderBook {
     this.pruneInvalidOrders();
     if (this.onChange) this.onChange();
     if (this.isOpen) {
+      this._renderCategoryAndItemTabs();
       this._renderList();
       this._renderChart();
       this._refreshMarketRate();
@@ -446,6 +519,7 @@ class OrderBook {
     this.pruneInvalidOrders();
     if (this.onChange) this.onChange();
     if (this.isOpen) {
+      this._renderCategoryAndItemTabs();
       this._renderList();
       this._renderChart();
       this._refreshMarketRate();
@@ -596,17 +670,60 @@ class OrderBook {
     }
   }
 
-  // AI 用：板上の成立可能な注文を約定（プレイヤー注文を優先しつつ他AI注文も対象）
+  // AI の主観的な参考評価額を算出（取引履歴を最優先し、未成立時は生産手間・在庫需給で動的推定）
+  getAIValuation(itemType, aiChar = null) {
+    const hist = this.priceHistory[itemType];
+    let anchor;
+    if (hist && hist.length > 0) {
+      const recent = hist.slice(-3);
+      anchor = recent.reduce((s, v) => s + v, 0) / recent.length;
+    } else if (typeof COOKING_RECIPES !== "undefined" && COOKING_RECIPES[itemType]) {
+      const tier = COOKING_RECIPES[itemType].tier || 1;
+      anchor = 5 + tier * 4.5;
+    } else if (typeof CROP_CATALOG !== "undefined" && CROP_CATALOG[itemType]) {
+      const tier = CROP_CATALOG[itemType].tier || 1;
+      anchor = 2 + tier * 2.5;
+    } else {
+      anchor = 3.0;
+    }
+
+    if (aiChar && aiChar.inventory) {
+      const held = aiChar.inventory[itemType] || 0;
+      if (held === 0) anchor *= 1.15;
+      else if (held >= 4) anchor *= 0.85;
+
+      const charBias = aiChar.id === "carol" && typeof CROP_CATALOG !== "undefined" && CROP_CATALOG[itemType]
+        ? 1.12
+        : aiChar.id === "alice"
+          ? 1.04
+          : aiChar.id === "bob"
+            ? 0.98
+            : 1.0;
+      anchor *= charBias;
+    }
+
+    return Math.max(1, anchor);
+  }
+
+  // AI 用：板上の注文を価格妥当性付きで審査し約定（法外な高値・安値は見送る）
   tryAIExecute(aiChar, preferResource = null) {
     this.pruneInvalidOrders();
-    const candidates = this.orders.filter(o =>
-      o.posterId !== aiChar.id &&
-      (aiChar.inventory[o.buyType] || 0) >= o.buyAmount &&
-      (o.posterRef.inventory[o.sellType] || 0) >= o.sellAmount
-    );
+    const candidates = this.orders.filter(o => {
+      if (o.posterId === aiChar.id) return false;
+      if ((aiChar.inventory[o.buyType] || 0) < o.buyAmount) return false;
+      if ((o.posterRef.inventory[o.sellType] || 0) < o.sellAmount) return false;
+
+      const fair = this.getAIValuation(o.resourceType, aiChar);
+      if (o.side === "sell") {
+        // AIが買い手：高すぎる売り注文は買わない
+        return o.unitPrice <= fair * 1.4;
+      }
+      // AIが売り手：安すぎる買い注文には売らない
+      return o.unitPrice >= fair * 0.65;
+    });
     if (!candidates.length) return null;
 
-    // プレイヤー注文と指定資源を優先、次いで有利な価格順
+    // プレイヤー注文と指定品目を優先、次いで自分にとって割安/割高な順
     candidates.sort((a, b) => {
       const aPlayer = a.posterId === "player" ? 1 : 0;
       const bPlayer = b.posterId === "player" ? 1 : 0;
@@ -616,10 +733,11 @@ class OrderBook {
         const bPref = b.resourceType === preferResource ? 1 : 0;
         if (aPref !== bPref) return bPref - aPref;
       }
-      // 売られている資源を買うなら安い方、買い注文へ売るなら高い方
-      const aScore = a.side === "sell" ? -a.unitPrice : a.unitPrice;
-      const bScore = b.side === "sell" ? -b.unitPrice : b.unitPrice;
-      return bScore - aScore;
+      const aFair = this.getAIValuation(a.resourceType, aiChar);
+      const bFair = this.getAIValuation(b.resourceType, aiChar);
+      const aEdge = a.side === "sell" ? (aFair - a.unitPrice) / aFair : (a.unitPrice - aFair) / aFair;
+      const bEdge = b.side === "sell" ? (bFair - b.unitPrice) / bFair : (b.unitPrice - bFair) / bFair;
+      return bEdge - aEdge;
     });
 
     for (const o of candidates) {
@@ -837,8 +955,10 @@ class OrderBook {
     const ctx = canvas.getContext("2d");
     ctx.clearRect(0, 0, W, H);
 
-    const COLORS = { wood: "#6D4C1F", stone: "#666666", herb: "#2E6B1E", fish: "#2566A8" };
-    const color  = COLORS[this._activeResource] || "#5A8A44";
+    const defaultColors = { wood: "#6D4C1F", stone: "#666666", herb: "#2E6B1E", fish: "#2566A8" };
+    const color = (typeof ITEM_CHART_COLOR !== "undefined" && ITEM_CHART_COLOR[this._activeResource])
+      || defaultColors[this._activeResource]
+      || "#5A8A44";
     const pad = { top: 8, right: 12, bottom: 18, left: 40 };
     const cW = W - pad.left - pad.right;
     const cH = H - pad.top  - pad.bottom;
@@ -944,6 +1064,95 @@ class OrderBook {
     ctx.fillText(`直近 ${last.toFixed(2)}🪙（${data.length}約定）`, W - pad.right, H - 2);
   }
 
+  _getCategoryDefs() {
+    if (typeof ITEM_CATEGORY_DEFS !== "undefined" && Array.isArray(ITEM_CATEGORY_DEFS)) {
+      return ITEM_CATEGORY_DEFS;
+    }
+    return [{ id: "resource", label: "⛏ 資源", items: TRADE_RESOURCES }];
+  }
+
+  _getCategoryForItem(itemType) {
+    const def = this._getCategoryDefs().find(c => c.items.includes(itemType));
+    return def ? def.id : "resource";
+  }
+
+  _populateItemSelects() {
+    if (typeof document === "undefined") return;
+    const defs = this._getCategoryDefs();
+    const buildOptionsHtml = (includeCoin, coinFirst) => {
+      const coinOpt = `<option value="coin">${RESOURCE_EMOJI.coin} ${RESOURCE_LABEL.coin}</option>`;
+      const groups = defs.map(cat => {
+        const opts = cat.items
+          .map(t => `<option value="${t}">${RESOURCE_EMOJI[t] || ""} ${RESOURCE_LABEL[t] || t}</option>`)
+          .join("");
+        return `<optgroup label="${cat.label}">${opts}</optgroup>`;
+      }).join("");
+      if (!includeCoin) return groups;
+      return coinFirst ? coinOpt + groups : groups + coinOpt;
+    };
+
+    const pSell = document.getElementById("post-sell-type");
+    const pBuy  = document.getElementById("post-buy-type");
+    const mBuy  = document.getElementById("market-buy-type");
+    const mSell = document.getElementById("market-sell-type");
+    if (pSell) { pSell.innerHTML = buildOptionsHtml(true, false); pSell.value = "wood"; }
+    if (pBuy)  { pBuy.innerHTML  = buildOptionsHtml(true, true);  pBuy.value  = "coin"; }
+    if (mBuy)  { mBuy.innerHTML  = buildOptionsHtml(false, false); mBuy.value  = "wood"; }
+    if (mSell) { mSell.innerHTML = buildOptionsHtml(false, false); mSell.value = "wood"; }
+  }
+
+  _renderCategoryAndItemTabs() {
+    if (typeof document === "undefined") return;
+    const defs = this._getCategoryDefs();
+
+    document.querySelectorAll(".cat-tab-btn").forEach(btn => {
+      const active = btn.dataset.cat === this._activeCategory;
+      const catDef = defs.find(c => c.id === btn.dataset.cat);
+      const orderCount = catDef
+        ? this.orders.filter(o => catDef.items.includes(o.resourceType)).length
+        : 0;
+      btn.classList.toggle("active", active);
+      btn.setAttribute("aria-selected", String(active));
+      if (catDef) {
+        btn.innerHTML = orderCount > 0
+          ? `${catDef.label} <span class="cat-order-cnt">${orderCount}</span>`
+          : catDef.label;
+      }
+    });
+
+    const tabsEl = document.getElementById("resource-tabs");
+    if (!tabsEl) return;
+    const activeCat = defs.find(c => c.id === this._activeCategory) || defs[0];
+    if (!activeCat.items.includes(this._activeResource)) {
+      this._activeResource = activeCat.items[0];
+    }
+
+    tabsEl.classList.toggle("is-grid-4", activeCat.items.length === 8);
+    tabsEl.classList.toggle("is-grid-3", activeCat.items.length === 6);
+    tabsEl.innerHTML = activeCat.items.map(t => {
+      const active = t === this._activeResource;
+      const shortName = (typeof RESOURCE_SHORT_LABEL !== "undefined" && RESOURCE_SHORT_LABEL[t])
+        || RESOURCE_LABEL[t] || t;
+      const owned = this._player?.inventory?.[t] || 0;
+      const hasOrder = this.orders.some(o => o.resourceType === t);
+      const badge = owned > 0 ? `<span class="tab-owned">×${owned}</span>` : "";
+      const dot = hasOrder ? `<span class="tab-order-dot" aria-hidden="true"></span>` : "";
+      return `<button type="button" class="resource-tab-btn${active ? " active" : ""}" data-resource="${t}" role="tab" aria-selected="${active}" title="${RESOURCE_LABEL[t] || t}">${dot}${RESOURCE_EMOJI[t] || ""} ${shortName}${badge}</button>`;
+    }).join("");
+  }
+
+  _selectItem(itemType) {
+    if (!TRADE_RESOURCES.includes(itemType)) return;
+    this._activeCategory = this._getCategoryForItem(itemType);
+    this._activeResource = itemType;
+    this._renderCategoryAndItemTabs();
+    this._syncFormsToResource(itemType);
+    this._renderList();
+    this._renderChart();
+    this._refreshMarketRate();
+    this._refreshLimitPreview();
+  }
+
   _setupHandlers() {
     document.getElementById("orderbook-close")
       ?.addEventListener("click", () => this.close());
@@ -979,7 +1188,7 @@ class OrderBook {
       });
     });
 
-    // 指値フォーム：片方を資源にしたらもう片方を自動でコインに合わせる（誤入力防止）
+    // 指値フォーム：片方を品目にしたらもう片方を自動でコインに合わせる（誤入力防止）
     const sellSel = document.getElementById("post-sell-type");
     const buySel  = document.getElementById("post-buy-type");
     sellSel?.addEventListener("change", () => {
@@ -988,6 +1197,13 @@ class OrderBook {
       } else if (sellSel.value === "coin" && buySel && buySel.value === "coin") {
         buySel.value = this._activeResource;
       }
+      if (sellSel.value !== "coin") {
+        this._activeCategory = this._getCategoryForItem(sellSel.value);
+        this._activeResource = sellSel.value;
+        this._renderCategoryAndItemTabs();
+        this._renderList();
+        this._renderChart();
+      }
       this._refreshLimitPreview();
     });
     buySel?.addEventListener("change", () => {
@@ -995,6 +1211,13 @@ class OrderBook {
         sellSel.value = "coin";
       } else if (buySel.value === "coin" && sellSel && sellSel.value === "coin") {
         sellSel.value = this._activeResource;
+      }
+      if (buySel.value !== "coin") {
+        this._activeCategory = this._getCategoryForItem(buySel.value);
+        this._activeResource = buySel.value;
+        this._renderCategoryAndItemTabs();
+        this._renderList();
+        this._renderChart();
       }
       this._refreshLimitPreview();
     });
@@ -1018,21 +1241,22 @@ class OrderBook {
       document.getElementById(id)?.addEventListener("change", () => this._refreshMarketRate());
     });
 
-    // 資源タブ切替（フォームの対象資源も自然に連動）
-    document.querySelectorAll(".resource-tab-btn").forEach(btn => {
+    // カテゴリタブ切替（資源 / 作物 / 料理）
+    document.querySelectorAll(".cat-tab-btn").forEach(btn => {
       btn.addEventListener("click", () => {
-        this._activeResource = btn.dataset.resource;
-        document.querySelectorAll(".resource-tab-btn").forEach(b => {
-          const active = b === btn;
-          b.classList.toggle("active", active);
-          b.setAttribute("aria-selected", String(active));
-        });
-        this._syncFormsToResource(this._activeResource);
-        this._renderList();
-        this._renderChart();
-        this._refreshMarketRate();
-        this._refreshLimitPreview();
+        const catId = btn.dataset.cat;
+        const catDef = this._getCategoryDefs().find(c => c.id === catId);
+        if (!catDef || !catDef.items.length) return;
+        this._activeCategory = catId;
+        this._selectItem(catDef.items[0]);
       });
+    });
+
+    // 品目タブ切替（イベント委譲：動的再描画にも対応）
+    document.getElementById("resource-tabs")?.addEventListener("click", e => {
+      const btn = e.target.closest(".resource-tab-btn");
+      if (!btn || !btn.dataset.resource) return;
+      this._selectItem(btn.dataset.resource);
     });
 
     // テクニカル指標トグル

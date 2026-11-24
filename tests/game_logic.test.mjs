@@ -17,16 +17,31 @@ globalThis.GAME_CONFIG = GAME_CONFIG;
 globalThis.AI_CHARACTERS_CONFIG = AI_CHARACTERS_CONFIG;
 
 const {
+  BASE_RESOURCE_TYPES,
+  CROP_ITEM_TYPES,
+  DISH_ITEM_TYPES,
+  TRADABLE_ITEM_TYPES,
+  ITEM_CATEGORY_DEFS,
   RESOURCE_EMOJI,
   RESOURCE_LABEL,
+  RESOURCE_SHORT_LABEL,
+  ITEM_CHART_COLOR,
   MAP_RESOURCE_LAYOUTS,
   WorldResource,
   ResourceManager,
 } = require(path.join(rootDir, "js/resources.js"));
+globalThis.BASE_RESOURCE_TYPES = BASE_RESOURCE_TYPES;
+globalThis.CROP_ITEM_TYPES = CROP_ITEM_TYPES;
+globalThis.DISH_ITEM_TYPES = DISH_ITEM_TYPES;
+globalThis.TRADABLE_ITEM_TYPES = TRADABLE_ITEM_TYPES;
+globalThis.ITEM_CATEGORY_DEFS = ITEM_CATEGORY_DEFS;
 globalThis.RESOURCE_EMOJI = RESOURCE_EMOJI;
 globalThis.RESOURCE_LABEL = RESOURCE_LABEL;
+globalThis.RESOURCE_SHORT_LABEL = RESOURCE_SHORT_LABEL;
+globalThis.ITEM_CHART_COLOR = ITEM_CHART_COLOR;
 
 const {
+  INITIAL_COINS,
   makeInventory,
   inventoryAdd,
   inventoryCanAfford,
@@ -34,6 +49,7 @@ const {
   getInventorySummary,
   computeAssetValue,
 } = require(path.join(rootDir, "js/inventory.js"));
+globalThis.INITIAL_COINS = INITIAL_COINS;
 globalThis.makeInventory = makeInventory;
 globalThis.inventoryAdd = inventoryAdd;
 globalThis.inventoryCanAfford = inventoryCanAfford;
@@ -97,9 +113,9 @@ function makeChar(id, name, invOverrides = {}) {
 }
 
 // ── Inventory テスト ────────────────────────────────────────
-test("Inventory: deduct prevents negative values and computeAssetValue sums market value", () => {
+test("Inventory: deduct prevents negative values and computeAssetValue sums market value across resources, crops, and dishes", () => {
   const inv = makeInventory();
-  assert.equal(inv.coin, 10);
+  assert.equal(inv.coin, INITIAL_COINS);
   assert.equal(inventoryAdd(inv, "wood", 3), true);
   assert.equal(inventoryAdd(inv, "wood", -2), false);
   assert.equal(inv.wood, 3);
@@ -110,10 +126,20 @@ test("Inventory: deduct prevents negative values and computeAssetValue sums mark
   assert.equal(inventoryDeduct(inv, { wood: 2 }), true);
   assert.equal(inv.wood, 1);
 
-  const val = computeAssetValue(inv, { wood: [1.5, 2.5], stone: [], herb: [], fish: [] });
-  assert.equal(val.coins, 10);
-  assert.equal(val.resourceValue, 2.5);
-  assert.equal(val.total, 12.5);
+  // 作物・料理も取引履歴がある場合のみ市場価格で評価され、未約定品は0評価（固定価格なし）
+  inventoryAdd(inv, "carrot", 2);
+  inventoryAdd(inv, "carrot_salad", 1);
+  const val = computeAssetValue(inv, {
+    wood: [1.5, 2.5],
+    stone: [],
+    herb: [],
+    fish: [],
+    carrot: [4],
+    carrot_salad: [],
+  });
+  assert.equal(val.coins, INITIAL_COINS);
+  assert.equal(val.resourceValue, 2.5 + 2 * 4);
+  assert.equal(val.total, INITIAL_COINS + 10.5);
 });
 
 // ── ResourceManager テスト ──────────────────────────────────
@@ -392,41 +418,54 @@ test("NavGrid: builds collision from map/atlas, slides along walls, and finds A*
   assert.ok(moved.y > 240);
 });
 
-// ── ProgressionManager（街発展・強化・アバター・依頼）テスト ──
-test("ProgressionManager: quests pay coins, town upgrades Lv.0->5, upgrades & avatars unlock and persist", () => {
-  const player = makeChar("player", "Player", { coin: 10, wood: 5, stone: 4, herb: 4, fish: 2 });
+// ── ProgressionManager（街発展・強化・アバター・固定報酬廃止）テスト ──
+test("ProgressionManager: no fixed quests/dividends/trade-bonuses, town upgrades Lv.0->5, upgrades & avatars persist", () => {
+  const player = makeChar("player", "Player", { coin: 30, wood: 5, stone: 4, herb: 6, fish: 2 });
   const pm = new ProgressionManager(player);
 
-  // 依頼の達成でコインが増えること
-  pm.activeQuest = { id: "q_test", title: "テスト依頼", cost: { wood: 2 }, rewardCoins: 6 };
-  const qRes = pm.completeActiveQuest();
-  assert.equal(qRes.ok, true);
-  assert.equal(player.inventory.wood, 3);
-  assert.equal(player.inventory.coin, 16);
-  assert.equal(pm.completedQuestsCount, 1);
+  // 固定報酬の納品依頼が存在しないこと
+  assert.equal("activeQuest" in pm, false);
+  assert.equal(typeof pm.completeActiveQuest, "undefined");
 
-  // 街 Lv.1 アップグレード（コスト: coin 8, wood 3, stone 2）
+  // 街 Lv.1 アップグレード（コスト: coin 10, wood 3, stone 2）
   const tRes = pm.upgradeTown();
   assert.equal(tRes.ok, true);
   assert.equal(pm.townLevel, 1);
-  assert.equal(player.inventory.coin, 8);
+  assert.equal(player.inventory.coin, 20);
 
-  // 60秒経過で定期配当 +1🪙 が入ること
-  const div = pm.update(60.1);
-  assert.equal(div, 1);
-  assert.equal(player.inventory.coin, 9);
+  // 時間経過しても自動配当コインは一切増えないこと
+  const div = pm.update(180);
+  assert.equal(div, 0);
+  assert.equal(player.inventory.coin, 20);
 
-  // 俊足ブーツ強化（コスト: coin 6, herb 2）→ 移動速度 1.25倍
+  // 俊足ブーツ強化（コスト: coin 4, herb 2）→ 移動速度 1.25倍
   const uRes = pm.buyUpgrade("boots");
   assert.equal(uRes.ok, true);
   assert.equal(pm.getPlayerSpeedMultiplier(), 1.25);
 
-  // アバター解放（コイン付与して解放＆切替）
-  player.inventory.coin = 20;
+  // 豊作の知恵（旧merchant）強化しても約定時固定コインボーナスは0、農地速度と収穫数のみ伸びること
+  const fRes = pm.buyUpgrade("merchant");
+  assert.equal(fRes.ok, true);
+  assert.equal(pm.getFarmHarvestBonus("player"), 1);
+  assert.equal(pm.getFarmHarvestBonus("alice"), 0);
+  const coinBeforeTradeCount = player.inventory.coin;
+  assert.equal(pm.onPlayerTradeExecuted(), 0);
+  assert.equal(player.inventory.coin, coinBeforeTradeCount);
+  assert.equal(pm.totalTradesCompleted, 1);
+
+  // アバター解放（コイン消費して解放＆切替）
   const aRes = pm.unlockOrEquipAvatar("animal_01");
   assert.equal(aRes.ok, true);
   assert.equal(aRes.newlyUnlocked, true);
   assert.equal(pm.activeAvatar, "animal_01");
+
+  // 全コイン消費合計が世界総コイン供給量（4人×INITIAL_COINS）内に収まりデッドロックしないこと
+  const townCoinSum = TOWN_LEVELS.reduce((s, t) => s + (t.cost.coin || 0), 0);
+  const upgCoinSum = Object.values(PLAYER_UPGRADES)
+    .flatMap(u => u.tiers)
+    .reduce((s, t) => s + (t.cost.coin || 0), 0);
+  const avatarCoinSum = AVATAR_CATALOG.reduce((s, a) => s + (a.costCoins || 0), 0);
+  assert.ok(townCoinSum + upgCoinSum + avatarCoinSum < INITIAL_COINS * 4);
 
   // シリアライズ→デシリアライズが一致すること
   const snap = pm.serialize();
@@ -434,12 +473,13 @@ test("ProgressionManager: quests pay coins, town upgrades Lv.0->5, upgrades & av
   pm2.deserialize(snap);
   assert.equal(pm2.townLevel, 1);
   assert.equal(pm2.upgrades.boots, 1);
+  assert.equal(pm2.upgrades.merchant, 1);
   assert.equal(pm2.activeAvatar, "animal_01");
-  assert.equal(pm2.completedQuestsCount, 1);
+  assert.equal(pm2.totalTradesCompleted, 1);
 });
 
 // ── SaveManager（セッション＆取引履歴保存）テスト ───────────
-test("SaveManager: saves, loads, restores full game state and clears cleanly", () => {
+test("SaveManager: saves, loads, restores full game state including crops, dishes, and market prices", () => {
   const mem = new Map();
   const fakeStorage = {
     getItem: k => (mem.has(k) ? mem.get(k) : null),
@@ -448,16 +488,17 @@ test("SaveManager: saves, loads, restores full game state and clears cleanly", (
   };
   const sm = new SaveManager(fakeStorage);
 
-  const player = makeChar("player", "Player", { coin: 25, wood: 4 });
-  const alice = makeChar("alice", "Alice", { coin: 12, stone: 3 });
+  const player = makeChar("player", "Player", { coin: 25, wood: 4, carrot: 2, carrot_salad: 1 });
+  const alice = makeChar("alice", "Alice", { coin: 30, stone: 3 });
   const bm = new BuildingManager(player);
-  bm.placeAtForChar(player, "campfire"); // wood 3, stone 1 必要なので失敗→flowerBed用に調整
   player.inventory.herb = 2;
   bm.placeAtForChar(player, "flowerBed");
 
   const ob = new OrderBook();
   ob.postOrder(alice, "stone", 2, "coin", 4);
   ob.executeOrder(ob.orders[0].id, player);
+  ob.postOrder(player, "carrot_salad", 1, "coin", 9);
+  ob.executeOrder(ob.orders[0].id, alice);
   ob.postOrder(alice, "stone", 1, "coin", 3); // オープン注文を残す
 
   const pm = new ProgressionManager(player);
@@ -478,7 +519,7 @@ test("SaveManager: saves, loads, restores full game state and clears cleanly", (
   const loaded = sm.load();
   assert.ok(loaded);
   assert.equal(loaded.mapId, "forest_hamlet");
-  assert.equal(loaded.orderBook.tradeHistory.length, 1);
+  assert.equal(loaded.orderBook.tradeHistory.length, 2);
 
   // 新規インスタンスへ復元
   const p2 = makeChar("player", "Player");
@@ -496,27 +537,39 @@ test("SaveManager: saves, loads, restores full game state and clears cleanly", (
   assert.equal(game2.progression.townLevel, 2);
   assert.equal(game2.progression.upgrades.boots, 1);
   assert.equal(game2.buildingManager.placed.length, 1);
-  assert.equal(game2.orderBook.tradeHistory.length, 1);
+  assert.equal(game2.orderBook.tradeHistory.length, 2);
   assert.equal(game2.orderBook.orders.length, 1);
   assert.equal(p2.inventory.coin, player.inventory.coin);
+  assert.equal(p2.inventory.carrot, 2);
+  assert.equal(a2.inventory.carrot_salad, 1);
+  assert.deepEqual(game2.orderBook.priceHistory.carrot_salad, [9]);
 
   sm.clear();
   assert.equal(sm.hasSave(), false);
 });
 
-// ── FarmManager（農業プログレッション＆ライバル農地競争）テスト ──
-test("FarmManager: 8 crops grow through stages 0->3, enforce rival ownership & 2-plot cap, pay harvest rewards, and persist", () => {
+// ── FarmManager（農業プログレッション＆固定報酬ゼロ確認）テスト ──
+test("FarmManager: 8 crops grow 0->3, enforce ownership & 2-plot cap, yield items with ZERO fixed coins", () => {
   const fm = new FarmManager();
   assert.equal(Object.keys(CROP_CATALOG).length, 8);
   assert.equal(fm.plots.length, 8);
 
-  const player = makeChar("player", "Player", { coin: 20, herb: 2 });
-  const alice = makeChar("alice", "Alice", { coin: 20, herb: 2 });
+  // 作物・料理カタログに固定コイン報酬(rewardCoins)が存在しないこと
+  for (const crop of Object.values(CROP_CATALOG)) {
+    assert.equal("rewardCoins" in crop, false, `${crop.id} に固定 rewardCoins が残っていないこと`);
+  }
+  for (const recipe of Object.values(COOKING_RECIPES)) {
+    assert.equal("rewardCoins" in recipe, false, `${recipe.id} に固定 rewardCoins が残っていないこと`);
+  }
 
-  // Player がニンジン (Stage 0) を植える
+  const player = makeChar("player", "Player", { coin: 50, wood: 3, herb: 3 });
+  const alice = makeChar("alice", "Alice", { coin: 50, wood: 3, herb: 3 });
+
+  // Player がニンジン (Stage 0, コスト wood:1) を植える
   const p1 = fm.plantCrop(player, "carrot", null, 0);
   assert.equal(p1.ok, true);
-  assert.equal(player.inventory.coin, 18);
+  assert.equal(player.inventory.wood, 2);
+  assert.equal(player.inventory.coin, 50); // コインは消費されない
   assert.equal(p1.plot.stage, 0);
 
   // Player が小麦を2区画目に植える
@@ -539,6 +592,10 @@ test("FarmManager: 8 crops grow through stages 0->3, enforce rival ownership & 2
   // Stage 2 ではまだ収穫不可
   assert.equal(fm.harvestPlot(p1.plot.id, player).ok, false);
 
+  // 未約定作物の農地評価は0（固定価格なし）、約定価格があれば市場価格を反映
+  assert.equal(fm.getFarmAssetValue("player", { carrot: [] }), 0);
+  assert.ok(fm.getFarmAssetValue("player", { carrot: [5] }) > 0);
+
   const ripeEvents = fm.update(stepTime);
   assert.ok(ripeEvents.length >= 1);
   assert.equal(p1.plot.stage, 3);
@@ -546,19 +603,20 @@ test("FarmManager: 8 crops grow through stages 0->3, enforce rival ownership & 2
   // ライバル Alice は Player の畑を横取り収穫できないこと
   assert.equal(fm.harvestPlot(p1.plot.id, alice).ok, false);
 
-  // Player が収穫するとコイン (+5🪙) とボーナス資源 (🌿+1) を獲得し区画が空くこと
+  // Player が収穫するとコインは0増加、所持品に作物(🥕+1)と副産物資源(🌿+1)のみ追加されること
   const coinsBefore = player.inventory.coin;
   const herbsBefore = player.inventory.herb;
   const hRes = fm.harvestPlot(p1.plot.id, player);
   assert.equal(hRes.ok, true);
-  assert.equal(player.inventory.coin, coinsBefore + CROP_CATALOG.carrot.rewardCoins);
+  assert.equal(player.inventory.coin, coinsBefore);
+  assert.equal(player.inventory.carrot, 1);
   assert.equal(player.inventory.herb, herbsBefore + CROP_CATALOG.carrot.bonusAmount);
   assert.equal(p1.plot.cropId, null);
 });
 
 test("Rivalry: investor bonuses apply exclusively to Player and AI executes PLAN: farm", () => {
-  const player = makeChar("player", "Player", { coin: 30, wood: 5, stone: 5 });
-  const alice = makeChar("alice", "Alice", { coin: 15, herb: 2 });
+  const player = makeChar("player", "Player", { coin: 50, wood: 5, stone: 5 });
+  const alice = makeChar("alice", "Alice", { coin: 50, wood: 3, herb: 3 });
   const pm = new ProgressionManager(player);
   pm.townLevel = 3;
   pm.upgrades.craftsman = 1;
@@ -576,43 +634,80 @@ test("Rivalry: investor bonuses apply exclusively to Player and AI executes PLAN
   const api = new LMStudioClient();
   const brain = new AIBrain([alice, player], cm, api, rm);
   brain.farmManager = new FarmManager();
+  brain.orderBook = new OrderBook();
   brain.progression = pm;
 
   brain._executePlanFarm(alice, "PLAN: farm\nCROP: wheat\nMESSAGE: @Player 小麦を植えて逆転するよ！");
   const alicePlots = brain.farmManager.getPlotsByOwner("alice");
   assert.equal(alicePlots.length, 1);
   assert.equal(alicePlots[0].cropId, "wheat");
+
+  // AI は作物・料理の trade 指示も正しくパースできること
+  assert.deepEqual(
+    brain._parseTradeDecision("PLAN: trade\nACTION: sell\nRESOURCE: carrot_salad\nAMOUNT: 1\nCOINS: 9"),
+    { action: "sell", resource: "carrot_salad", amount: 1, coins: 9 }
+  );
 });
 
-test("Cooking & Season Victory: harvested crops stock pantry, cook high-value dishes, and detect 150🪙 / Lv.5 winner", () => {
+test("Market-only Coins: harvest -> cook -> list on OrderBook conserves coins strictly and only pays upon execution", () => {
   const fm = new FarmManager();
-  const player = makeChar("player", "Player", { coin: 10, herb: 2 });
-  const carol = makeChar("carol", "Carol", { coin: 10, herb: 2 });
+  const ob = new OrderBook();
+  const player = makeChar("player", "Player", { coin: 50, wood: 2, herb: 2 });
+  const carol = makeChar("carol", "Carol", { coin: 50, wood: 2, herb: 2 });
+  const initialTotalCoins = player.inventory.coin + carol.inventory.coin;
 
-  // ニンジン収穫でパントリーに 🥕+1 が貯まること
+  // 1. ニンジン栽培＆収穫：所持品に 🥕+1、コインは一切増えない
   const planted = fm.plantCrop(player, "carrot", null, 0);
   const step = CROP_CATALOG.carrot.stageTime + 0.1;
   fm.update(step);
   fm.update(step);
   fm.update(step);
   fm.harvestPlot(planted.plot.id, player);
-  assert.equal(fm.getPantry("player").carrot, 1);
+  assert.equal(player.inventory.carrot, 1);
+  assert.equal(player.inventory.coin, 50);
 
-  // 🥗 新鮮キャロットサラダ (carrot:1 + herb:1 -> 🪙+9) を調理できること
-  const beforeCoin = player.inventory.coin;
+  // 2. 🥗 キャロットサラダ調理：所持品に 🥗+1、コインは一切増えない
   const cookRes = fm.cookRecipe(player, "carrot_salad");
   assert.equal(cookRes.ok, true);
-  assert.equal(player.inventory.coin, beforeCoin + COOKING_RECIPES.carrot_salad.rewardCoins);
-  assert.equal(fm.getPantry("player").carrot, 0);
+  assert.equal(player.inventory.carrot, 0);
+  assert.equal(player.inventory.carrot_salad, 1);
+  assert.equal(player.inventory.coin, 50);
   assert.equal(fm.getCookedCount("player"), 1);
 
-  // AIライバル (Carol) もパントリー食材があれば自動調理できること
-  fm.addPantryCrop("carol", "carrot", 1);
-  const aiCook = fm.tryAICook(carol);
+  // 3. 法外な高値(50🪙)で売り注文を出しても：出品だけではコインは増えず、AIも買わない
+  const highOrder = ob.postOrder(player, "carrot_salad", 1, "coin", 50);
+  assert.ok(highOrder);
+  assert.equal(player.inventory.coin, 50);
+  assert.equal(ob.tryAIExecute(carol), null);
+  assert.equal(player.inventory.coin, 50);
+  assert.equal(player.inventory.coin + carol.inventory.coin, initialTotalCoins);
+
+  // 4. 取消して妥当価格(9🪙)で再出品 → 約定するまではコイン不変、AI約定で初めて買い手→売り手へ厳密移動
+  assert.equal(ob.cancelOrder(highOrder.id, "player"), true);
+  const fairOrder = ob.postOrder(player, "carrot_salad", 1, "coin", 9);
+  assert.ok(fairOrder);
+  assert.equal(player.inventory.coin, 50); // 出品直後はまだ不変
+
+  const exec = ob.tryAIExecute(carol);
+  assert.ok(exec);
+  assert.equal(player.inventory.coin, 59);
+  assert.equal(carol.inventory.coin, 41);
+  assert.equal(player.inventory.carrot_salad, 0);
+  assert.equal(carol.inventory.carrot_salad, 1);
+  assert.equal(player.inventory.coin + carol.inventory.coin, initialTotalCoins); // 総コイン厳密保存
+  assert.deepEqual(ob.priceHistory.carrot_salad, [9]);
+
+  // 5. AIライバル (Carol) も所持作物があれば自動調理でき、コインは増えない
+  carol.inventory.carrot = 1;
+  carol.inventory.herb = 2;
+  const carolCoinBeforeCook = carol.inventory.coin;
+  const aiCook = fm.tryAICook(carol, ob.priceHistory);
   assert.ok(aiCook);
   assert.equal(aiCook.recipe.id, "carrot_salad");
+  assert.equal(carol.inventory.coin, carolCoinBeforeCook);
+  assert.equal(carol.inventory.carrot_salad, 2);
 
-  // 建物設置時に同一座標で重ならないようオフセット配置されること
+  // 6. 建物設置時に同一座標で重ならないようオフセット配置されること
   player.inventory.herb = 10;
   const bm = new BuildingManager(player);
   bm.placeAtForChar(player, "flowerBed");
@@ -620,7 +715,7 @@ test("Cooking & Season Victory: harvested crops stock pantry, cook high-value di
   const dist = Math.hypot(bm.placed[0].x - bm.placed[1].x, bm.placed[0].y - bm.placed[1].y);
   assert.ok(dist >= 40);
 
-  // シーズン優勝判定（総資産 150🪙 到達で勝者が記録されること）
+  // 7. シーズン優勝判定（総資産 150🪙 到達で勝者が記録されること）
   const pm = new ProgressionManager(player);
   let winnerEvent = null;
   pm.onSeasonVictory = w => { winnerEvent = w; };

@@ -1,5 +1,51 @@
-const RESOURCE_EMOJI = { wood: "🪵", stone: "🪨", herb: "🌿", fish: "🐟", coin: "🪙" };
-const RESOURCE_LABEL = { wood: "木材", stone: "石", herb: "薬草", fish: "魚", coin: "コイン" };
+const BASE_RESOURCE_TYPES = ["wood", "stone", "herb", "fish"];
+const CROP_ITEM_TYPES = [
+  "carrot", "wheat", "cabbage", "tomato",
+  "corn", "rice", "pumpkin", "strawberry",
+];
+const DISH_ITEM_TYPES = [
+  "carrot_salad", "herb_bread", "tomato_soup",
+  "onigiri_bento", "pumpkin_pie", "strawberry_tart",
+];
+const TRADABLE_ITEM_TYPES = [
+  ...BASE_RESOURCE_TYPES,
+  ...CROP_ITEM_TYPES,
+  ...DISH_ITEM_TYPES,
+];
+const ITEM_CATEGORY_DEFS = [
+  { id: "resource", label: "⛏ 資源", items: BASE_RESOURCE_TYPES },
+  { id: "crop",     label: "🌾 作物", items: CROP_ITEM_TYPES },
+  { id: "dish",     label: "🍳 料理", items: DISH_ITEM_TYPES },
+];
+
+const RESOURCE_EMOJI = {
+  wood: "🪵", stone: "🪨", herb: "🌿", fish: "🐟", coin: "🪙",
+  carrot: "🥕", wheat: "🌾", cabbage: "🥬", tomato: "🍅",
+  corn: "🌽", rice: "🍙", pumpkin: "🎃", strawberry: "🍓",
+  carrot_salad: "🥗", herb_bread: "🍞", tomato_soup: "🍲",
+  onigiri_bento: "🍱", pumpkin_pie: "🥧", strawberry_tart: "🎂",
+};
+const RESOURCE_LABEL = {
+  wood: "木材", stone: "石", herb: "薬草", fish: "魚", coin: "コイン",
+  carrot: "ニンジン", wheat: "小麦", cabbage: "キャベツ", tomato: "トマト",
+  corn: "トウモロコシ", rice: "お米", pumpkin: "カボチャ", strawberry: "イチゴ",
+  carrot_salad: "キャロットサラダ", herb_bread: "ハーブパン", tomato_soup: "トマト魚介スープ",
+  onigiri_bento: "焼きおにぎり弁当", pumpkin_pie: "パンプキンパイ", strawberry_tart: "ストロベリータルト",
+};
+const RESOURCE_SHORT_LABEL = {
+  wood: "木材", stone: "石", herb: "薬草", fish: "魚", coin: "コイン",
+  carrot: "ニンジン", wheat: "小麦", cabbage: "キャベツ", tomato: "トマト",
+  corn: "コーン", rice: "お米", pumpkin: "カボチャ", strawberry: "イチゴ",
+  carrot_salad: "サラダ", herb_bread: "パン", tomato_soup: "スープ",
+  onigiri_bento: "弁当", pumpkin_pie: "パイ", strawberry_tart: "タルト",
+};
+const ITEM_CHART_COLOR = {
+  wood: "#6D4C1F", stone: "#666666", herb: "#2E6B1E", fish: "#2566A8",
+  carrot: "#D86218", wheat: "#B8860B", cabbage: "#3B8C3E", tomato: "#C62828",
+  corn: "#C99700", rice: "#546E7A", pumpkin: "#C75B12", strawberry: "#C2185B",
+  carrot_salad: "#43A047", herb_bread: "#8D5524", tomato_soup: "#D84315",
+  onigiri_bento: "#5D4037", pumpkin_pie: "#E65100", strawberry_tart: "#AD1457",
+};
 
 // 資源ごとの高コントラスト配色（どの地形タイル上でも埋もれないメダル表示用）
 const RESOURCE_THEME = {
@@ -300,8 +346,15 @@ class ResourceManager {
 
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
+    BASE_RESOURCE_TYPES,
+    CROP_ITEM_TYPES,
+    DISH_ITEM_TYPES,
+    TRADABLE_ITEM_TYPES,
+    ITEM_CATEGORY_DEFS,
     RESOURCE_EMOJI,
     RESOURCE_LABEL,
+    RESOURCE_SHORT_LABEL,
+    ITEM_CHART_COLOR,
     RESOURCE_THEME,
     MAP_RESOURCE_LAYOUTS,
     WorldResource,

@@ -249,8 +249,14 @@ class AIBrain {
     c._pendingAnnounceMessage = msgMatch ? msgMatch[1].trim() : null;
   }
 
+  _getTradableItemTypes() {
+    return typeof TRADABLE_ITEM_TYPES !== "undefined"
+      ? TRADABLE_ITEM_TYPES
+      : ["wood", "stone", "herb", "fish"];
+  }
+
   _executePlanTrade(char, planText) {
-    const RESOURCE_TYPES = ["wood", "stone", "herb", "fish"];
+    const ALL_ITEMS = this._getTradableItemTypes();
     const decision = planText ? this._parseTradeDecision(planText) : null;
     const target = this._nearestOther(char);
 
@@ -311,8 +317,8 @@ class AIBrain {
       }
     }
 
-    // フォールバック：相場連動型の売買または既存注文の約定
-    if (Math.random() < 0.45) {
+    // フォールバック：妥当価格の既存注文（プレイヤー注文含む）を優先して約定
+    if (Math.random() < 0.65) {
       const executed = this.orderBook.tryAIExecute(char);
       if (executed) {
         const text = `@${executed.posterName} ${executed.posterName}の注文を成立させたよ！${RESOURCE_EMOJI[executed.buyType]}×${executed.buyAmount}と${RESOURCE_EMOJI[executed.sellType]}×${executed.sellAmount}を交換したね`;
@@ -321,30 +327,46 @@ class AIBrain {
       }
     }
 
-    const haveResources = RESOURCE_TYPES.filter(
+    const haveItems = ALL_ITEMS.filter(
       t => this.orderBook.getAvailableBalance(char, t) >= 1
     );
     const availCoin = this.orderBook.getAvailableBalance(char, "coin");
     let sellType, buyType, sellAmount, buyAmount;
 
-    const getRefPrice = (resType) => {
-      const hist = this.orderBook.priceHistory[resType];
-      if (hist && hist.length > 0) return hist[hist.length - 1];
-      return 2.0;
-    };
+    const getRefPrice = (itemType) => (
+      typeof this.orderBook.getAIValuation === "function"
+        ? this.orderBook.getAIValuation(itemType, char)
+        : 2.5
+    );
 
-    if (haveResources.length > 0 && (Math.random() < 0.6 || availCoin < 1)) {
-      sellType = haveResources[Math.floor(Math.random() * haveResources.length)];
+    if (haveItems.length > 0 && (Math.random() < 0.65 || availCoin < 2)) {
+      // 料理＞作物＞基本資源の優先度で売りに出しやすい品目を選ぶ
+      const dishHeld = haveItems.filter(t => typeof DISH_ITEM_TYPES !== "undefined" && DISH_ITEM_TYPES.includes(t));
+      const cropHeld = haveItems.filter(t => typeof CROP_ITEM_TYPES !== "undefined" && CROP_ITEM_TYPES.includes(t));
+      const pool = dishHeld.length > 0 ? dishHeld : cropHeld.length > 0 ? cropHeld : haveItems;
+      sellType = pool[Math.floor(Math.random() * pool.length)];
       sellAmount = Math.min(2, this.orderBook.getAvailableBalance(char, sellType));
       buyType = "coin";
       const ref = getRefPrice(sellType);
-      buyAmount = Math.max(1, Math.round(sellAmount * (ref + (Math.random() - 0.35))));
-    } else if (availCoin >= 1) {
-      buyType = RESOURCE_TYPES[Math.floor(Math.random() * RESOURCE_TYPES.length)];
+      const mult = 0.9 + Math.random() * 0.25;
+      buyAmount = Math.max(1, Math.round(sellAmount * ref * mult));
+    } else if (availCoin >= 2) {
+      // 基本資源とTier1〜2作物を中心に買い注文を提示
+      const buyPool = ALL_ITEMS.filter(t => {
+        if (typeof COOKING_RECIPES !== "undefined" && COOKING_RECIPES[t]) {
+          return availCoin >= getRefPrice(t);
+        }
+        if (typeof CROP_CATALOG !== "undefined" && CROP_CATALOG[t]) {
+          return (CROP_CATALOG[t].tier || 1) <= 2 || availCoin >= getRefPrice(t);
+        }
+        return true;
+      });
+      buyType = buyPool[Math.floor(Math.random() * buyPool.length)] || "wood";
       buyAmount = 1;
       sellType = "coin";
       const ref = getRefPrice(buyType);
-      sellAmount = Math.max(1, Math.min(availCoin, Math.round(ref + (Math.random() - 0.5))));
+      const mult = 0.85 + Math.random() * 0.2;
+      sellAmount = Math.max(1, Math.min(availCoin, Math.round(ref * mult)));
     } else {
       return;
     }
@@ -406,43 +428,73 @@ class AIBrain {
     this._presentResponse(char, text, target.id, target.name, null);
   }
 
+  _tryAIListItem(char, itemType) {
+    if (!this.orderBook || !itemType) return null;
+    const avail = this.orderBook.getAvailableBalance(char, itemType);
+    if (avail < 1) return null;
+    const ref = typeof this.orderBook.getAIValuation === "function"
+      ? this.orderBook.getAIValuation(itemType, char)
+      : 4;
+    const ask = Math.max(1, Math.round(ref * (0.9 + Math.random() * 0.22)));
+    return this.orderBook.postOrder(char, itemType, 1, "coin", ask);
+  }
+
   _executePlanFarm(char, planText) {
     if (!this.farmManager) return;
     const target = this._nearestOther(char);
     const msgMatch = planText?.match(/MESSAGE\s*[:：]\s*(.+)/i);
     const customMsg = msgMatch ? msgMatch[1].trim() : null;
 
-    // 1. 収穫可能な自分の畑があれば最優先で収穫（料理も作れれば連続クラフト）
+    // 1. 収穫可能な自分の畑があれば最優先で収穫（固定コインなし・料理作成後に取引板へ出品）
     const harvested = this.farmManager.harvestAllRipeForChar(char);
     if (harvested.length > 0) {
-      let totalCoins = harvested.reduce((s, r) => s + r.rewardCoins, 0);
       const cropNames = harvested.map(r => `${r.crop.emoji}${r.crop.name}`).join("・");
-      const cooked = this.farmManager.tryAICook(char);
-      if (cooked) totalCoins += cooked.rewardCoins;
-      const cookNote = cooked ? `さらに${cooked.recipe.emoji}${cooked.recipe.name}を調理して` : "";
-      const rankInfo = this._getCharRank(char);
-      const fallback = `@${target.name} 畑から${cropNames}を収穫！${cookNote}合計🪙+${totalCoins}ゲット！現在${rankInfo.rank}位（${rankInfo.total.toFixed(1)}🪙）、負けないよ！`;
+      const cooked = this.farmManager.tryAICook(char, this.orderBook?.priceHistory);
+      let listedNote = "";
+      if (cooked) {
+        const listed = this._tryAIListItem(char, cooked.dishId);
+        listedNote = listed && !listed._wasFullyMatched
+          ? `さらに${cooked.recipe.emoji}${cooked.recipe.name}を作って🪙${listed.buyAmount}で取引板に出品したよ！`
+          : `さらに${cooked.recipe.emoji}${cooked.recipe.name}を作ったよ！`;
+      } else {
+        const listed = this._tryAIListItem(char, harvested[0].crop?.id);
+        if (listed && !listed._wasFullyMatched) {
+          listedNote = `さっそく🪙${listed.buyAmount}で取引板に売りに出したよ！`;
+        } else {
+          listedNote = "取引板で売ってコインを増やすよ！";
+        }
+      }
+      const fallback = `@${target.name} 畑から${cropNames}を収穫！${listedNote}`;
       const text = LMStudioClient.sanitizeAnnounceMessage(customMsg, target.name) || fallback;
       this._presentResponse(char, text, target.id, target.name, null);
       return;
     }
 
-    // 1.5 手持ちの収穫食材で料理が作れる場合は調理してコイン獲得
-    const cookedOnly = this.farmManager.tryAICook(char);
+    // 1.5 手持ちの収穫作物で料理が作れる場合は調理して取引板へ出品
+    const cookedOnly = this.farmManager.tryAICook(char, this.orderBook?.priceHistory);
     if (cookedOnly) {
-      const rankInfo = this._getCharRank(char);
-      const fallback = `@${target.name} 収穫した食材で${cookedOnly.recipe.emoji}${cookedOnly.recipe.name}を作って🪙+${cookedOnly.rewardCoins}稼いだよ！現在${rankInfo.rank}位！`;
+      const listed = this._tryAIListItem(char, cookedOnly.dishId);
+      const listHint = listed && !listed._wasFullyMatched
+        ? `🪙${listed.buyAmount}で取引板に出したから見てみてね！`
+        : "取引板で売ってコインを狙うよ！";
+      const fallback = `@${target.name} 収穫した食材で${cookedOnly.recipe.emoji}${cookedOnly.recipe.name}を作ったよ！${listHint}`;
       const text = LMStudioClient.sanitizeAnnounceMessage(customMsg, target.name) || fallback;
       this._presentResponse(char, text, target.id, target.name, null);
       return;
     }
 
-    // 2. 空き農地があれば種まき（より高収益な解放済み作物を優先）
+    // 2. 空き農地があれば種まき（市場評価額・ティアが高い解放済み作物を優先）
     const townLv = this.progression?.townLevel || 0;
+    const scoreCrop = (crop) => {
+      if (this.orderBook && typeof this.orderBook.getAIValuation === "function") {
+        return this.orderBook.getAIValuation(crop.id, char);
+      }
+      return (crop.tier || 1) * 3;
+    };
     const available = this.farmManager
       .getAvailableCrops(char, townLv)
       .filter(crop => this.farmManager.canPlant(char, crop.id, townLv).ok)
-      .sort((a, b) => b.rewardCoins - a.rewardCoins);
+      .sort((a, b) => scoreCrop(b) - scoreCrop(a));
 
     if (!available.length) return;
 
@@ -461,7 +513,7 @@ class AIBrain {
     const planted = this.farmManager.plantCrop(char, chosenCrop.id, null, townLv);
     if (!planted.ok) return;
 
-    const fallback = `@${target.name} 農地に${chosenCrop.emoji}${chosenCrop.name}の種をまいたよ！収穫したら一気に資産ランキングを駆け上がるからね！`;
+    const fallback = `@${target.name} 農地に${chosenCrop.emoji}${chosenCrop.name}の種をまいたよ！育てて取引板で売るからね！`;
     const text = LMStudioClient.sanitizeAnnounceMessage(customMsg, target.name) || fallback;
     this._presentResponse(char, text, target.id, target.name, null);
   }
@@ -481,11 +533,15 @@ class AIBrain {
     const townLv = this.progression?.townLevel || 0;
     const canFarm = this.farmManager &&
       this.farmManager.getAvailableCrops(c, townLv).some(crop => this.farmManager.canPlant(c, crop.id, townLv).ok);
+    const hasOpenOrders = Boolean(this.orderBook && this.orderBook.orders.some(o => o.posterId !== c.id));
 
     const actions = ["chat"];
     if (hasNodes) actions.push("gather", "gather");
     if (canFarm) actions.push("farm", "farm"); // ライバルも積極的に農地を開拓
-    if (this.orderBook) actions.push("trade");
+    if (this.orderBook) {
+      actions.push("trade");
+      if (hasOpenOrders) actions.push("trade"); // 板に他者注文があれば市場参加率を高める
+    }
     if (this.buildingManager && affordable.length > 0 && myBuildings.length < 2) {
       actions.push("build");
     }
@@ -502,7 +558,9 @@ class AIBrain {
   }
 
   _computeCharAsset(char) {
-    const farmValue = this.farmManager ? this.farmManager.getFarmAssetValue(char.id) : 0;
+    const farmValue = this.farmManager
+      ? this.farmManager.getFarmAssetValue(char.id, this.orderBook?.priceHistory)
+      : 0;
     const buildingCount = this.buildingManager
       ? this.buildingManager.placed.filter(b => b.builderId === char.id).length
       : 0;
@@ -605,8 +663,11 @@ class AIBrain {
   }
 
   _buildPriceSummary() {
-    const RESOURCE_TYPES = ["wood", "stone", "herb", "fish"];
-    return RESOURCE_TYPES.map(r => this.orderBook.getIndicatorSummary(r)).join("\n");
+    const base = ["wood", "stone", "herb", "fish"];
+    const tradedExtras = this._getTradableItemTypes().filter(
+      t => !base.includes(t) && (this.orderBook?.priceHistory?.[t]?.length || 0) > 0
+    );
+    return [...base, ...tradedExtras].map(r => this.orderBook.getIndicatorSummary(r)).join("\n");
   }
 
   _buildBuildingsSummary() {
@@ -653,21 +714,26 @@ class AIBrain {
     const actionMatch = text.match(/ACTION\s*[:：]\s*(sell|buy|execute|skip)/i);
     if (!actionMatch) return null;
     const action = actionMatch[1].toLowerCase();
-    const resourceMatch = text.match(/RESOURCE\s*[:：]\s*(wood|stone|herb|fish)/i);
+    const validItems = this._getTradableItemTypes();
+    const resourceMatch = text.match(/RESOURCE\s*[:：]\s*([a-z_]+)/i);
+    const parsedItem = resourceMatch && validItems.includes(resourceMatch[1].toLowerCase())
+      ? resourceMatch[1].toLowerCase()
+      : null;
+
     if (action === "execute" || action === "skip") {
-      return { action, resource: resourceMatch ? resourceMatch[1].toLowerCase() : null, amount: 0, coins: 0 };
+      return { action, resource: parsedItem, amount: 0, coins: 0 };
     }
 
     const amountMatch = text.match(/AMOUNT\s*[:：]\s*(\d+)/i);
     const coinsMatch  = text.match(/COINS\s*[:：]\s*(\d+)/i);
-    if (!resourceMatch || !amountMatch || !coinsMatch) return null;
+    if (!parsedItem || !amountMatch || !coinsMatch) return null;
 
     const amount = parseInt(amountMatch[1], 10);
     const coins  = parseInt(coinsMatch[1], 10);
     if (amount <= 0 || amount > 50)  return null;
     if (coins  <= 0 || coins  > 200) return null;
 
-    return { action, resource: resourceMatch[1].toLowerCase(), amount, coins };
+    return { action, resource: parsedItem, amount, coins };
   }
 
   celebrateTownUpgrade(spec, player) {
