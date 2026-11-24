@@ -767,21 +767,24 @@ test("Serverless GitHub Pages mode: HuggingFaceClient switches to browser-hf and
   tts._unblockedAtMs = Date.now() - 1000;
   assert.equal(tts.toggle(), false);
 
-  // 6. ブラウザ内蔵 Kokoro-82M (StyleTTS2 24kHz) が3キャラ別々の日本語モデル・自然な話速・playbackRate=1.0 を維持していること
+  // 6. ブラウザ内蔵 ZEN-TTS (44.1kHz 感情対応) が3キャラ別々のモデル・動的感情制御・playbackRate=1.0・必須クレジットを維持していること
   const workerSrc = fs.readFileSync(path.join(rootDir, "js/hf-tts-worker.js"), "utf8");
-  assert.match(workerSrc, /onnx-community\/Kokoro-82M-v1\.0-ONNX/);
+  assert.match(workerSrc, /zenryokukikai\/zen-tts@/);
+  assert.match(workerSrc, /tts-models\.zenryoku\.work\/v1\.3\.0/);
+  assert.match(workerSrc, /function\s+inferEmotionForSentence/);
   const assignedVoices = new Set();
   for (const name of ["Alice", "Bob", "Carol"]) {
-    const m = workerSrc.match(new RegExp(`${name}:\\s*\\{\\s*voice:\\s*"(j[fm]_[a-z]+)",\\s*speed:\\s*([0-9.]+)`));
-    assert.ok(m, `${name} の Kokoro 日本語ボイス定義が見つかること`);
+    const m = workerSrc.match(new RegExp(`${name}:\\s*\\{[\\s\\S]*?voice:\\s*"([a-z]+)"[\\s\\S]*?speed:\\s*([0-9.]+)`));
+    assert.ok(m, `${name} の ZEN-TTS ボイス定義が見つかること`);
     assignedVoices.add(m[1]);
     const spd = Number(m[2]);
-    assert.ok(spd >= 0.82 && spd <= 1.02, `${name} の話速(${spd})が自然な会話テンポ範囲(0.82〜1.02)であること`);
+    assert.ok(spd >= 0.85 && spd <= 1.05, `${name} の話速(${spd})が自然な会話テンポ範囲(0.85〜1.05)であること`);
   }
   assert.equal(assignedVoices.size, 3, "Alice / Bob / Carol の3キャラが重複しない別々の音声モデルを持つこと");
-  assert.doesNotMatch(workerSrc, /model_fp16\.onnx/, "WebGPU で NaN 無音を引き起こす model_fp16.onnx を使用しないこと");
   const ttsSrc = fs.readFileSync(path.join(rootDir, "js/tts.js"), "utf8");
   assert.match(ttsSrc, /const\s+playbackRate\s*=\s*1\.0\s*;/);
+  const indexHtml = fs.readFileSync(path.join(rootDir, "index.html"), "utf8");
+  assert.match(indexHtml, /音声合成：ZEN-TTS[\s\S]*https:\/\/zenryokukikai\.com/);
 });
 
 test("Audio-synchronized chat & movement: delays chat until audio starts, holds movement/bubble during speech, resumes on end", async () => {

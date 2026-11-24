@@ -747,6 +747,26 @@ select:focus-visible {
 
 #input-row { display: flex; gap: 6px; }
 
+#tts-credit {
+  margin-top: 6px;
+  font-size: 10px;
+  line-height: 1.3;
+  color: var(--c-timeText);
+  text-align: right;
+  font-family: 'Segoe UI', 'Meiryo', sans-serif;
+}
+
+#tts-credit a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+#tts-credit a:hover,
+#tts-credit a:focus-visible {
+  color: var(--c-msgText);
+}
+
 #chat-input {
   flex: 1;
   min-width: 0;

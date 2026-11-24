@@ -1,113 +1,70 @@
 // ============================================================
-// hf-tts-worker.js — サーバー不要で動くブラウザ内蔵 Hugging Face ニューラル日本語音声
-// Model: onnx-community/Kokoro-82M-v1.0-ONNX (StyleTTS2 + ISTFTNet, 24kHz, Apache-2.0)
-// Frontend: Rust WASM OpenJTalk (Naist-JDic + A2/A3 文節区切り) -> Kokoro 日本語 IPA
+// hf-tts-worker.js — サーバー不要で動くブラウザ内蔵 感情表現対応 44.1kHz 日本語ニューラル音声
+// Engine: ZEN-TTS v1.4.0 (https://zenryokukikai.com) — 無改変の公式配布物を動的ロード
+//   - 44.1 kHz NSF デコーダ + 5感情スタイル連続混合 (neutral / happy / sad / angry / apologetic)
+//   - WebGPU（約 200ms）優先 / CPU WASM SIMD（約 500ms）自動フォールバック
+//   - Cache API 永続キャッシュ対応（2回目以降は通信不要で即起動）
 // 3キャラクター個別ボイス:
-//   - Alice : jf_alpha    (クリアで自然な女性声・探偵)
-//   - Bob   : jm_kumo     (落ち着いた深みのある男性声・詩人)
-//   - Carol : jf_tebukuro (明るく元気な女性声・料理人)
+//   - Alice : marine  (全力 マリン   — やわらかくクリアな女性声・探偵)
+//   - Bob   : hashiro (全力 ハシロウ — 落ち着いた深みのある男性声・詩人)
+//   - Carol : kikka   (全力 キッカ   — 素朴で透明感のある若い女性声・料理人)
 // ============================================================
 
-import * as ort from "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/ort.min.mjs";
+const ZEN_VERSION = "v1.4.0";
+const ESM_BASE = `https://esm.sh/gh/zenryokukikai/zen-tts@${ZEN_VERSION}/src/runtime`;
+const G2P_BASE = `https://cdn.jsdelivr.net/gh/zenryokukikai/zen-tts@${ZEN_VERSION}/models/g2p`;
+const WASM_URL = `https://cdn.jsdelivr.net/gh/zenryokukikai/zen-tts@${ZEN_VERSION}/cpu/tts-cpu.wasm`;
+const ZTM_BASE = "https://tts-models.zenryoku.work/v1.3.0";
+const CACHE_NAME = "bot-game-zen-tts-v1.4.0";
+const SAMPLE_RATE = 44100;
 
-const ORT_DIST = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/";
-// jsDelivr は 50MB 超の WASM を 403 で制限するため、CORS 許可済みの unpkg から Rust WASM OpenJTalk を取得
-const WASM_G2P_URL = "https://unpkg.com/piper-plus@0.9.1/dist/rust-wasm/piper_plus_wasm.js";
-const HF_KOKORO_BASE = "https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main";
-const KOKORO_CACHE_NAME = "bot-game-kokoro-tts-v1";
-const SAMPLE_RATE = 24000;
-
-if (ort?.env?.wasm) {
-  ort.env.wasm.wasmPaths = ORT_DIST;
-  ort.env.wasm.proxy = false;
-  if (typeof self !== "undefined" && !self.crossOriginIsolated) {
-    ort.env.wasm.numThreads = 1;
-  }
-}
-
-// 3キャラクター全員に別々のネイティブ日本語 StyleTTS2 話者モデルを割り当て
+// 3キャラクターそれぞれに独立した 44.1kHz 日本語スタジオモデルと性格に合った基本感情・抑揚を割り当て
 const CHAR_VOICE_PROFILES = {
-  Alice: { voice: "jf_alpha",    speed: 0.92 },
-  Bob:   { voice: "jm_kumo",     speed: 0.90 },
-  Carol: { voice: "jf_tebukuro", speed: 0.95 },
+  Alice: {
+    voice: "marine",
+    speed: 0.96,
+    pitch: 0.5,
+    baseEmotion: { happy: 45, neutral: 55 },
+    baseStrength: 1.25,
+  },
+  Bob: {
+    voice: "hashiro",
+    speed: 0.94,
+    pitch: 0,
+    baseEmotion: { neutral: 72, happy: 28 },
+    baseStrength: 1.18,
+  },
+  Carol: {
+    voice: "kikka",
+    speed: 0.98,
+    pitch: 0.5,
+    baseEmotion: { happy: 65, neutral: 35 },
+    baseStrength: 1.32,
+  },
 };
 
-// piper_plus_wasm (Rust OpenJTalk) の PUA 契約に完全準拠した音素テーブル
-const OJT_SYMBOLS = [
-  "_", "^", "$", "?", "\uE016", "\uE017", "\uE018", "#", "[", "]",
-  "a", "i", "u", "e", "o", "A", "I", "U", "E", "O",
-  "\uE000", "\uE001", "\uE002", "\uE003", "\uE004",
-  "N", "\uE019", "\uE01A", "\uE01B", "\uE01C", "\uE005",
-  "k", "\uE006", "\uE007", "g", "\uE008", "\uE009",
-  "t", "\uE00A", "d", "\uE00B", "p", "\uE00C", "b", "\uE00D",
-  "\uE00E", "\uE00F", "s", "\uE010", "z", "\uE011",
-  "f", "h", "\uE012", "v", "n", "\uE013", "m", "\uE014",
-  "r", "\uE015", "w", "y", "j", "q",
-];
-
-const OJT_CONFIG_JSON = JSON.stringify({
-  phoneme_type: "openjtalk",
-  language_id_map: { ja: 0 },
-  phoneme_id_map: Object.fromEntries(OJT_SYMBOLS.map((s, i) => [s, [i]])),
-});
-
-const PUA_NAME = {
-  "\uE000": "a:", "\uE001": "i:", "\uE002": "u:", "\uE003": "e:", "\uE004": "o:",
-  "\uE005": "cl", "\uE006": "ky", "\uE007": "kw", "\uE008": "gy", "\uE009": "gw",
-  "\uE00A": "ty", "\uE00B": "dy", "\uE00C": "py", "\uE00D": "by",
-  "\uE00E": "ch", "\uE00F": "ts", "\uE010": "sh", "\uE011": "zy",
-  "\uE012": "hy", "\uE013": "ny", "\uE014": "my", "\uE015": "ry",
-  "\uE016": "?!", "\uE017": "?.", "\uE018": "?~",
-  "\uE019": "N_m", "\uE01A": "N_n", "\uE01B": "N_ng", "\uE01C": "N_uvular",
-};
-
-const PALATAL_U_SET = new Set([
-  "s", "z", "ts", "ky", "gy", "ty", "dy", "py", "by", "ch", "sh", "zy", "j", "hy", "ny", "my", "ry",
-]);
-
-const PALATAL_I_CONS = {
-  k: "kʲ", g: "ɡʲ", b: "bʲ", p: "pʲ", m: "mʲ", r: "ɾʲ", v: "vʲ", t: "tʲ", d: "dʲ", ts: "ʦʲ",
-};
-
-const VOWEL_NAMES = new Set(["a", "i", "u", "e", "o", "a:", "i:", "u:", "e:", "o:", "A", "I", "U", "E", "O"]);
-
-let initPromise = null;
-let phonemizerInstance = null;
-let kokoroSession = null;
-let kokoroVocab = null;
-let loadedDevice = "wasm";
-const voiceEmbeddings = new Map();
+let zenRuntime = null;
+let sharedAssets = null; // { g2pJson, g2pBin, wasmBytes, gpuDevice, backend }
+let baseInitPromise = null;
+const ztmBufferPromises = new Map();
+const voiceEngines = new Map();
+const voiceEnginePromises = new Map();
 let synthQueue = Promise.resolve();
 
 function reportProgress(percent, stage = "loading") {
   self.postMessage({
     type: "progress",
-    model: "kokoro-82m",
+    model: "zen-tts",
     percent: Math.max(1, Math.min(99, Math.round(percent))),
     stage,
   });
-}
-
-async function detectUsableWebGPU() {
-  try {
-    if (typeof navigator === "undefined" || !navigator.gpu) return false;
-    const adapter = await navigator.gpu.requestAdapter();
-    if (!adapter) return false;
-    // requestAdapter() が成功しても requestDevice() で失敗する環境（ヘッドレス・旧ドライバ等）を事前除外
-    const device = await adapter.requestDevice();
-    if (!device) return false;
-    try { device.destroy(); } catch (_) {}
-    return true;
-  } catch (_) {
-    return false;
-  }
 }
 
 async function fetchCachedArrayBuffer(url, onProgress = null) {
   let cache = null;
   if (typeof caches !== "undefined") {
     try {
-      cache = await caches.open(KOKORO_CACHE_NAME);
+      cache = await caches.open(CACHE_NAME);
       const cached = await cache.match(url);
       if (cached && cached.ok) {
         const buf = await cached.arrayBuffer();
@@ -138,7 +95,7 @@ async function fetchCachedArrayBuffer(url, onProgress = null) {
       chunks.push(value);
       received += value.byteLength;
       const now = Date.now();
-      if (now - lastEmit >= 200 || received >= contentLength) {
+      if (now - lastEmit >= 180 || received >= contentLength) {
         lastEmit = now;
         onProgress(Math.min(1, received / contentLength));
       }
@@ -175,6 +132,183 @@ async function fetchCachedJson(url) {
   return JSON.parse(new TextDecoder("utf-8").decode(buf));
 }
 
+async function acquireWebGPUDevice() {
+  try {
+    if (typeof navigator === "undefined" || !navigator.gpu) return null;
+    const adapter = await navigator.gpu.requestAdapter();
+    if (!adapter) return null;
+    const device = await adapter.requestDevice();
+    if (!device) return null;
+    if (device.lost && typeof device.lost.then === "function") {
+      device.lost.then(() => {
+        if (sharedAssets && sharedAssets.gpuDevice === device) {
+          sharedAssets.gpuDevice = null;
+          sharedAssets.backend = "cpu";
+          voiceEngines.clear();
+          voiceEnginePromises.clear();
+        }
+      }).catch(() => {});
+    }
+    return device;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function loadZenRuntime() {
+  if (zenRuntime) return zenRuntime;
+  const [
+    { WgslOwnTts },
+    { CpuOwnTts },
+    { parseZtm, ownFromZtm, vocoderFromZtm },
+    { nsfExportToWeights, nsfF0Norm, nsfOutputGain },
+    { engineOptionsOf, splitSentences },
+    { withBuiltinDict },
+  ] = await Promise.all([
+    import(`${ESM_BASE}/tts-own-device.ts`),
+    import(`${ESM_BASE}/cpu-tts.ts`),
+    import(`${ESM_BASE}/ztm.ts`),
+    import(`${ESM_BASE}/nsf-weights.ts`),
+    import(`${ESM_BASE}/speak-options.ts`),
+    import(`${ESM_BASE}/builtin-dict.ts`),
+  ]);
+  zenRuntime = {
+    WgslOwnTts,
+    CpuOwnTts,
+    parseZtm,
+    ownFromZtm,
+    vocoderFromZtm,
+    nsfExportToWeights,
+    nsfF0Norm,
+    nsfOutputGain,
+    engineOptionsOf,
+    splitSentences,
+    withBuiltinDict,
+  };
+  return zenRuntime;
+}
+
+function fetchVoiceZtm(voiceId, onProgress = null) {
+  if (ztmBufferPromises.has(voiceId)) {
+    return ztmBufferPromises.get(voiceId);
+  }
+  const p = fetchCachedArrayBuffer(`${ZTM_BASE}/${voiceId}.ztm`, onProgress).catch((err) => {
+    ztmBufferPromises.delete(voiceId);
+    throw err;
+  });
+  ztmBufferPromises.set(voiceId, p);
+  return p;
+}
+
+async function ensureBaseReady() {
+  if (sharedAssets && zenRuntime) return sharedAssets;
+  if (baseInitPromise) return baseInitPromise;
+
+  baseInitPromise = (async () => {
+    reportProgress(5, "loading");
+    const [rt, gpuDevice, g2pJson, g2pBin, wasmBytes] = await Promise.all([
+      loadZenRuntime(),
+      acquireWebGPUDevice(),
+      fetchCachedJson(`${G2P_BASE}/g2p.json`),
+      fetchCachedArrayBuffer(`${G2P_BASE}/g2p.bin`, (frac) => {
+        reportProgress(5 + frac * 30, "downloading");
+      }),
+      fetchCachedArrayBuffer(WASM_URL),
+    ]);
+    zenRuntime = rt;
+    sharedAssets = {
+      g2pJson,
+      g2pBin,
+      wasmBytes,
+      gpuDevice,
+      backend: gpuDevice ? "webgpu" : "cpu",
+    };
+    reportProgress(38, "downloading");
+    return sharedAssets;
+  })().catch((err) => {
+    baseInitPromise = null;
+    throw err;
+  });
+
+  return baseInitPromise;
+}
+
+function validateWaveform(pcm) {
+  if (!pcm || pcm.length < 256) return false;
+  let peak = 0;
+  for (let i = 0; i < pcm.length; i++) {
+    const v = pcm[i];
+    if (!Number.isFinite(v)) return false;
+    const a = Math.abs(v);
+    if (a > peak) peak = a;
+  }
+  return peak > 0.004 && peak < 20.0;
+}
+
+async function ensureVoiceEngine(voiceId, reportPrimaryProgress = false) {
+  if (voiceEngines.has(voiceId)) {
+    return voiceEngines.get(voiceId);
+  }
+  if (voiceEnginePromises.has(voiceId)) {
+    return voiceEnginePromises.get(voiceId);
+  }
+
+  const p = (async () => {
+    const assets = await ensureBaseReady();
+    const rt = zenRuntime;
+    const ztmBuf = await fetchVoiceZtm(
+      voiceId,
+      reportPrimaryProgress
+        ? (frac) => reportProgress(38 + frac * 44, "downloading")
+        : null
+    );
+    if (reportPrimaryProgress) reportProgress(85, "initializing");
+
+    const z = rt.parseZtm(ztmBuf);
+    const own = rt.ownFromZtm(z, assets.g2pJson, assets.g2pBin);
+    const voc = rt.vocoderFromZtm(z);
+    const weights = rt.nsfExportToWeights(voc.meta, voc.bin);
+
+    let engine = null;
+    let usedBackend = "cpu";
+
+    if (assets.gpuDevice) {
+      try {
+        engine = await rt.WgslOwnTts.fromData(assets.gpuDevice, own.meta, own.bin, {
+          weights,
+          meta: voc.meta,
+        });
+        usedBackend = "webgpu";
+      } catch (err) {
+        console.warn(`[ZEN-TTS Worker] WebGPU init failed for ${voiceId}, falling back to CPU WASM:`, err?.message || err);
+        engine = null;
+      }
+    }
+
+    if (!engine) {
+      engine = await rt.CpuOwnTts.create(
+        assets.wasmBytes,
+        own.meta,
+        own.bin,
+        weights,
+        rt.nsfF0Norm(voc.meta),
+        rt.nsfOutputGain(voc.meta)
+      );
+      usedBackend = "cpu";
+    }
+
+    const entry = { engine, backend: usedBackend, voiceId };
+    voiceEngines.set(voiceId, entry);
+    return entry;
+  })().catch((err) => {
+    voiceEnginePromises.delete(voiceId);
+    throw err;
+  });
+
+  voiceEnginePromises.set(voiceId, p);
+  return p;
+}
+
 function normalizeGameJapaneseTerms(text) {
   return String(text || "")
     .replace(/\bAlice\b/gi, "アリス")
@@ -188,245 +322,70 @@ function normalizeGameJapaneseTerms(text) {
 }
 
 /**
- * OpenJTalk (piper_plus_wasm) の音素列＋韻律特徴量(A2/A3)を
- * Kokoro-82M v1.0 学習時（misaki/cutlet.py）と同一の日本語 IPA＋文節スペース列へ変換する
+ * セリフの内容・句読点・キャラクター個性に応じて ZEN-TTS の 5 感情ブレンドと抑揚強度を動的決定する
+ * （棒読みを防ぎ、自然な感情表現・語尾の上がり下がりを引き出す）
  */
-function ojtToKokoroIpa(phonemeIds, prosodyFeatures) {
-  const items = [];
-  for (let i = 0; i < phonemeIds.length; i++) {
-    const sym = OJT_SYMBOLS[phonemeIds[i]];
-    if (!sym) continue;
-    const name = PUA_NAME[sym] || sym;
-    // VITS 音素間パディング "_" およびアクセント記号 "^", "[", "]" を除外して前後音素を直接参照可能にする
-    if (name === "_" || name === "^" || name === "[" || name === "]") continue;
-    const a2 = prosodyFeatures ? prosodyFeatures[i * 3 + 1] : 0;
-    const a3 = prosodyFeatures ? prosodyFeatures[i * 3 + 2] : 0;
-    items.push({ name, a2, a3 });
-  }
+function inferEmotionForSentence(sentence, characterName, profile) {
+  const s = String(sentence || "");
+  let emotion = { ...profile.baseEmotion };
+  let strength = profile.baseStrength;
+  let speed = profile.speed;
+  const pitch = profile.pitch;
 
-  const out = [];
-  let prevA2 = 0;
-  let prevA3 = 0;
-  let prevName = "";
+  const isQuestion = /[？?]$|(?:かな|だろう|どう思う|教えて|なぜ|どうして)[。！？!?]*$/.test(s);
+  const isExclaim = /[！!]$/.test(s);
 
-  for (let i = 0; i < items.length; i++) {
-    const { name: t, a2, a3 } = items[i];
-    const next = items[i + 1]?.name || "";
-    const next2 = items[i + 2]?.name || "";
-    const prev = items[i - 1]?.name || "";
-
-    if (t === "$") { out.push("."); continue; }
-    if (t === "?") { out.push("?"); continue; }
-    if (t === "?!") { out.push("?!"); continue; }
-    if (t === "?." || t === "?~") { out.push("?"); continue; }
-    if (t === "#") { out.push(" "); prevA2 = 0; prevA3 = 0; prevName = t; continue; }
-
-    // A2（文節内モーラ位置）が 1 へ戻ったら文節境界として自然なスペースを挿入
-    if (
-      out.length > 0 &&
-      a2 === 1 &&
-      (prevA2 > 1 || (prevA2 === 1 && prevA3 === 1 && VOWEL_NAMES.has(prevName)))
-    ) {
-      out.push(" ");
-    }
-
-    if (t === "cl" || t === "q") {
-      out.push("ʔ");
-    } else if (t === "N_m") {
-      out.push("m");
-    } else if (t === "N_ng") {
-      out.push("ŋ");
-    } else if (t === "N_uvular") {
-      out.push("ɴ");
-    } else if (t === "N_n") {
-      if (next === "ny" || next === "ch" || next === "zy" || next === "j" || (next === "n" && next2.toLowerCase() === "i")) {
-        out.push("ɲ");
-      } else {
-        out.push("n");
-      }
-    } else if (t === "N") {
-      if (next === "m" || next === "my" || next === "p" || next === "py" || next === "b" || next === "by") out.push("m");
-      else if (next === "k" || next === "ky" || next === "kw" || next === "g" || next === "gy" || next === "gw") out.push("ŋ");
-      else if (next === "ny" || next === "ch" || next === "zy" || next === "j" || (next === "n" && next2.toLowerCase() === "i")) out.push("ɲ");
-      else if (next === "n" || next === "t" || next === "ty" || next === "d" || next === "dy" || next === "r" || next === "ry" || next === "z") out.push("n");
-      else out.push("ɴ");
-    } else if (t === "a:") {
-      out.push("aː");
-    } else if (t === "i:") {
-      out.push("iː");
-    } else if (t === "e:") {
-      out.push("eː");
-    } else if (t === "o:") {
-      out.push("oː");
-    } else if (t === "u:") {
-      out.push(PALATAL_U_SET.has(prev) ? "ɨː" : "ɯː");
+  if (/(ごめん|すみません|すまない|申し訳|失礼)/.test(s)) {
+    emotion = { apologetic: 72, sad: 13, neutral: 15 };
+    strength = Math.max(strength, 1.25);
+  } else if (/(負けない|くやし|悔し|勝負|絶対|許さ|ダメ|だめ|やめて)/.test(s)) {
+    if (characterName === "Carol") {
+      emotion = { angry: 48, happy: 32, neutral: 20 };
+      strength = 1.38;
+    } else if (characterName === "Alice") {
+      emotion = { angry: 38, happy: 27, neutral: 35 };
+      strength = 1.32;
     } else {
-      const tl = t.toLowerCase();
-      if (tl === "a" || tl === "i" || tl === "e" || tl === "o") {
-        out.push(tl);
-      } else if (tl === "u") {
-        out.push(PALATAL_U_SET.has(prev) ? "ɨ" : "ɯ");
-      } else {
-        const nextVowel = next.toLowerCase().replace(":", "");
-        if (nextVowel === "i" && PALATAL_I_CONS[t]) {
-          out.push(PALATAL_I_CONS[t]);
-        } else {
-          switch (t) {
-            case "k": out.push("k"); break;
-            case "ky": out.push("kʲ"); break;
-            case "kw": out.push("kᵝ"); break;
-            case "g": out.push("ɡ"); break;
-            case "gy": out.push("ɡʲ"); break;
-            case "gw": out.push("ɡᵝ"); break;
-            case "s": out.push("s"); break;
-            case "sh": out.push("ɕ"); break;
-            case "z":
-              if (nextVowel === "i") out.push("ʥ");
-              else if (nextVowel === "u") out.push("z");
-              else out.push("ʣ");
-              break;
-            case "zy": case "j": out.push("ʥ"); break;
-            case "t": out.push("t"); break;
-            case "ty": out.push("tʲ"); break;
-            case "ts": out.push("ʦ"); break;
-            case "ch": out.push("ʨ"); break;
-            case "d": out.push("d"); break;
-            case "dy": out.push("dʲ"); break;
-            case "n": out.push(nextVowel === "i" ? "ɲ" : "n"); break;
-            case "ny": out.push("ɲ"); break;
-            case "h":
-              if (nextVowel === "i") out.push("ç");
-              else if (nextVowel === "u") out.push("ɸ");
-              else out.push("h");
-              break;
-            case "hy": out.push("ç"); break;
-            case "f": out.push("ɸ"); break;
-            case "b": out.push("b"); break;
-            case "by": out.push("bʲ"); break;
-            case "p": out.push("p"); break;
-            case "py": out.push("pʲ"); break;
-            case "m": out.push("m"); break;
-            case "my": out.push("mʲ"); break;
-            case "y": out.push("j"); break;
-            case "r": out.push("ɾ"); break;
-            case "ry": out.push("ɾʲ"); break;
-            case "w": out.push("β"); break;
-            case "v": out.push("v"); break;
-            default: break;
-          }
-        }
-      }
+      emotion = { angry: 36, neutral: 64 };
+      strength = 1.22;
     }
-
-    if (a2 > 0) {
-      prevA2 = a2;
-      prevA3 = a3;
-    }
-    prevName = t;
-  }
-
-  return out
-    .join("")
-    .replace(/\s+([,.!?])/g, "$1")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function phonemizeJapaneseToKokoro(text) {
-  const normalized = normalizeGameJapaneseTerms(text);
-  if (!normalized) return [];
-
-  // 日本語の句読点・感嘆符・疑問符を保持しながら節ごとに音素化
-  const parts = normalized.match(/[^。！？!?,、]+[。！？!?,、]*/g) || [normalized];
-  const clauses = [];
-
-  for (const part of parts) {
-    const trimmed = part.trim();
-    if (!trimmed) continue;
-    const endMatch = trimmed.match(/[。！？!?,、]+$/);
-    const endRaw = endMatch ? endMatch[0] : "";
-    const body = endRaw ? trimmed.slice(0, -endRaw.length).trim() : trimmed;
-    if (!body) continue;
-
-    const res = phonemizerInstance.phonemize(body, "ja");
-    let ipa = "";
-    try {
-      ipa = ojtToKokoroIpa(res.phonemeIds, res.prosodyFeatures)
-        .replace(/[.?!]+$/, "")
-        .trim();
-    } finally {
-      res.free();
-    }
-    if (!ipa) continue;
-
-    let punct = "";
-    if (/[？?]/.test(endRaw) && /[！!]/.test(endRaw)) punct = "?!";
-    else if (/[？?]/.test(endRaw)) punct = "?";
-    else if (/[！!]/.test(endRaw)) punct = "!";
-    else if (/[、,]/.test(endRaw)) punct = ",";
-    else if (/[。.]/.test(endRaw)) punct = ".";
-
-    clauses.push(ipa + punct);
-  }
-
-  // Kokoro の最大トークン長(510)を超えない安全なチャンクにまとめる（通常の1〜2文は1チャンクで自然抑揚）
-  const chunks = [];
-  let current = "";
-  for (const clause of clauses) {
-    const candidate = current ? `${current} ${clause}` : clause;
-    if (current && candidate.length > 260) {
-      chunks.push(current);
-      current = clause;
+  } else if (/(残念|悲し|つらい|困っ|足りな|厳しい|ピンチ|大変|負けちゃ)/.test(s)) {
+    emotion = characterName === "Bob"
+      ? { sad: 54, neutral: 46 }
+      : { sad: 58, apologetic: 22, neutral: 20 };
+    strength = Math.max(strength, 1.25);
+    speed = Math.max(0.88, speed - 0.04);
+  } else if (/(やった|嬉し|うれし|最高|すごい|ありがと|おいし|美味し|楽し|ワクワク|優勝|完成|いいね|ナイス|ラッキー|収穫|成立|発展|成功|こんにちは|おはよう|ようこそ)/.test(s) || isExclaim) {
+    if (characterName === "Carol") {
+      emotion = { happy: 88, neutral: 12 };
+      strength = 1.38;
+    } else if (characterName === "Alice") {
+      emotion = { happy: 78, neutral: 22 };
+      strength = 1.34;
     } else {
-      current = candidate;
+      emotion = { happy: 52, neutral: 48 };
+      strength = 1.24;
     }
   }
-  if (current) chunks.push(current);
-  return chunks;
-}
 
-function tokenizeKokoroIpa(ipa) {
-  const ids = [0];
-  for (const ch of ipa) {
-    const id = kokoroVocab[ch];
-    if (id !== undefined) {
-      ids.push(id);
-      if (ids.length >= 510) break;
+  if (isQuestion) {
+    strength = Math.min(1.45, strength + 0.08);
+    if (!emotion.sad && !emotion.apologetic && !emotion.angry) {
+      emotion = {
+        ...emotion,
+        happy: Math.min(85, (emotion.happy || 25) + 12),
+        neutral: Math.max(15, (emotion.neutral || 50) - 12),
+      };
     }
   }
-  ids.push(0);
-  return ids;
-}
 
-async function runKokoroInference(session, tokenIds, voiceData, speed) {
-  const styleIndex = Math.min(Math.max(tokenIds.length - 2, 0), 509);
-  const style = voiceData.slice(styleIndex * 256, (styleIndex + 1) * 256);
-  const feeds = {
-    input_ids: new ort.Tensor("int64", BigInt64Array.from(tokenIds, BigInt), [1, tokenIds.length]),
-    style: new ort.Tensor("float32", style, [1, 256]),
-    speed: new ort.Tensor("float32", new Float32Array([speed]), [1]),
-  };
-  const out = await session.run(feeds);
-  const waveform = out.waveform || Object.values(out)[0];
-  return waveform?.data ? new Float32Array(waveform.data) : new Float32Array(0);
-}
-
-function validateWaveform(pcm) {
-  if (!pcm || pcm.length < 256) return false;
-  let peak = 0;
-  for (let i = 0; i < pcm.length; i++) {
-    const v = pcm[i];
-    if (!Number.isFinite(v)) return false;
-    const a = Math.abs(v);
-    if (a > peak) peak = a;
-  }
-  return peak > 0.005 && peak < 20.0;
+  return { emotion, strength, speed, pitch };
 }
 
 /**
- * Float32 PCM (24kHz) をピーク正規化＆12msデクリック処理して 16-bit WAV へエンコード
+ * Float32 PCM (44.1kHz) をピーク正規化＆12ms デクリック処理して 16-bit WAV へエンコード
  */
-function encodeNormalizedWav(pcm, sampleRate = SAMPLE_RATE, targetPeak = 0.88, maxGain = 3.5) {
+function encodeNormalizedWav(pcm, sampleRate = SAMPLE_RATE, targetPeak = 0.88, maxGain = 2.8) {
   const len = pcm.length;
   let maxAbs = 0;
   for (let i = 0; i < len; i++) {
@@ -467,100 +426,37 @@ function encodeNormalizedWav(pcm, sampleRate = SAMPLE_RATE, targetPeak = 0.88, m
   return buf;
 }
 
-async function ensureKokoroReady() {
-  if (kokoroSession && phonemizerInstance && kokoroVocab) return;
-  if (initPromise) return initPromise;
-
-  initPromise = (async () => {
-    reportProgress(5, "phonemizer");
-
-    // 1. OpenJTalk Rust WASM 音素化エンジン + Tokenizer + 3キャラ分の日本語話者ベクトルを並列ロード
-    const uniqueVoices = [...new Set(Object.values(CHAR_VOICE_PROFILES).map((p) => p.voice))];
-    const [wasmMod, tokJson, ...voiceBufs] = await Promise.all([
-      (async () => {
-        const mod = await import(WASM_G2P_URL);
-        if (typeof mod.default === "function") await mod.default();
-        return mod;
-      })(),
-      fetchCachedJson(`${HF_KOKORO_BASE}/tokenizer.json`),
-      ...uniqueVoices.map((vn) => fetchCachedArrayBuffer(`${HF_KOKORO_BASE}/voices/${vn}.bin`)),
-    ]);
-
-    phonemizerInstance = new wasmMod.WasmPhonemizer(OJT_CONFIG_JSON);
-    kokoroVocab = tokJson?.model?.vocab || {};
-    uniqueVoices.forEach((vn, idx) => {
-      voiceEmbeddings.set(vn, new Float32Array(voiceBufs[idx]));
-    });
-    reportProgress(28, "downloading");
-
-    // 2. WebGPU (FP32: NaN 回避かつ 0.7秒の高速生成) を優先し、非対応環境は軽量 WASM (q8f16: 82MB) へ自動切替
-    const hasWebGPU = await detectUsableWebGPU();
-    const candidates = hasWebGPU
-      ? [
-          { device: "webgpu", file: "onnx/model.onnx", eps: ["webgpu"] },
-          { device: "wasm",   file: "onnx/model_q8f16.onnx", eps: ["wasm"] },
-          { device: "wasm",   file: "onnx/model_quantized.onnx", eps: ["wasm"] },
-        ]
-      : [
-          { device: "wasm",   file: "onnx/model_q8f16.onnx", eps: ["wasm"] },
-          { device: "wasm",   file: "onnx/model_quantized.onnx", eps: ["wasm"] },
-        ];
-
-    const sanityIds = tokenizeKokoroIpa("koɲɲiʨiβa.");
-    const sanityVoice = voiceEmbeddings.get("jf_alpha");
-    let lastErr = null;
-
-    for (const cand of candidates) {
-      let sess = null;
-      try {
-        const modelBuf = await fetchCachedArrayBuffer(`${HF_KOKORO_BASE}/${cand.file}`, (frac) => {
-          reportProgress(28 + frac * 62, "downloading");
-        });
-        reportProgress(92, "initializing");
-
-        sess = await ort.InferenceSession.create(new Uint8Array(modelBuf), {
-          executionProviders: cand.eps,
-        });
-
-        // WebGPU シェーダの事前ウォームアップ＆NaN/無音異常の事前検知（正常でなければ自動フォールバック）
-        if (cand.device === "webgpu" && sanityVoice) {
-          reportProgress(96, "warmup");
-          const probe = await runKokoroInference(sess, sanityIds, sanityVoice, 0.92);
-          if (!validateWaveform(probe)) {
-            throw new Error("WebGPU sanity waveform check failed (NaN or silent output)");
-          }
-        }
-
-        kokoroSession = sess;
-        loadedDevice = cand.device;
-        self.postMessage({
-          type: "ready",
-          model: "kokoro-82m",
-          device: loadedDevice,
-          label: `Kokoro-82M 24kHz · ${loadedDevice.toUpperCase()} · jf_alpha / jm_kumo / jf_tebukuro`,
-        });
-        return;
-      } catch (err) {
-        lastErr = err;
-        console.warn(`[HF TTS Worker] Kokoro (${cand.device}/${cand.file}) failed:`, err?.message || err);
-        if (sess) {
-          try { await sess.release(); } catch (_) {}
-        }
-      }
-    }
-    throw lastErr || new Error("Kokoro-82M initialization failed");
-  })().catch((err) => {
-    initPromise = null;
-    throw err;
-  });
-
-  return initPromise;
-}
-
 function enqueue(fn) {
   const next = synthQueue.then(fn, fn);
   synthQueue = next.then(() => {}, () => {});
   return next;
+}
+
+async function preloadAllVoices() {
+  // 1. G2P + WASM と同時に 3 キャラ分の .ztm ダウンロードを開始（並列取得で約 8 秒）
+  const baseP = ensureBaseReady();
+  const ztmMarineP = fetchVoiceZtm("marine", (frac) => reportProgress(38 + frac * 44, "downloading"));
+  const ztmHashiroP = fetchVoiceZtm("hashiro").catch(() => {});
+  const ztmKikkaP = fetchVoiceZtm("kikka").catch(() => {});
+
+  await Promise.all([baseP, ztmMarineP]);
+  const primary = await ensureVoiceEngine("marine", true);
+
+  // Alice（マリン）準備完了時点で即座に利用可能通知を出し、残り2話者は裏でシームレス初期化
+  self.postMessage({
+    type: "ready",
+    model: "zen-tts",
+    device: primary.backend,
+    label: `ZEN-TTS 44.1kHz · ${primary.backend.toUpperCase()} · マリン / ハシロウ / キッカ`,
+  });
+
+  // 残り2話者（Bob: ハシロウ / Carol: キッカ）の初期化を synthQueue を塞がず裏で完了させる
+  Promise.all([ztmHashiroP, ztmKikkaP])
+    .then(async () => {
+      await ensureVoiceEngine("hashiro", false).catch(() => {});
+      await ensureVoiceEngine("kikka", false).catch(() => {});
+    })
+    .catch(() => {});
 }
 
 self.onmessage = async (event) => {
@@ -568,7 +464,7 @@ self.onmessage = async (event) => {
 
   if (msg.type === "preload") {
     try {
-      await ensureKokoroReady();
+      await preloadAllVoices();
     } catch (err) {
       self.postMessage({
         type: "error",
@@ -581,25 +477,38 @@ self.onmessage = async (event) => {
   if (msg.type === "synthesize") {
     const { requestId, text, characterName } = msg;
     const profile = CHAR_VOICE_PROFILES[characterName] || CHAR_VOICE_PROFILES.Alice;
-    try {
-      await ensureKokoroReady();
 
-      const { wavBuffer, durationSec, usedVoice } = await enqueue(async () => {
-        const chunks = phonemizeJapaneseToKokoro(text);
-        if (chunks.length === 0) {
-          throw new Error("No speakable Japanese phonemes");
+    try {
+      const { wavBuffer, durationSec, usedVoice, usedBackend } = await enqueue(async () => {
+        const entry = await ensureVoiceEngine(profile.voice, false);
+        const rt = zenRuntime;
+        const normalized = normalizeGameJapaneseTerms(text);
+        if (!normalized) {
+          throw new Error("Empty Japanese text for synthesis");
         }
-        const voiceData = voiceEmbeddings.get(profile.voice) || voiceEmbeddings.get("jf_alpha");
+
+        const sentences = rt.splitSentences(normalized);
+        const validSentences = sentences.length > 0 ? sentences : [normalized];
+        const dict = rt.withBuiltinDict();
+        const pauseSamples = Math.round(SAMPLE_RATE * 0.14);
         const pcms = [];
         let totalSamples = 0;
-        const pauseSamples = Math.round(SAMPLE_RATE * 0.12);
 
-        for (let ci = 0; ci < chunks.length; ci++) {
-          const ids = tokenizeKokoroIpa(chunks[ci]);
-          if (ids.length <= 2) continue;
-          const pcm = await runKokoroInference(kokoroSession, ids, voiceData, profile.speed);
+        for (const sent of validSentences) {
+          const trimmed = String(sent || "").trim();
+          if (!trimmed) continue;
+          const expr = inferEmotionForSentence(trimmed, characterName, profile);
+          const opts = rt.engineOptionsOf({
+            numbers: "rule",
+            emotion: expr.emotion,
+            strength: expr.strength,
+            speed: expr.speed,
+            pitch: expr.pitch,
+          });
+          const res = await entry.engine.speak(trimmed, { ...opts, dict });
+          const pcm = res?.audio;
           if (!validateWaveform(pcm)) {
-            throw new Error(`Invalid waveform output for ${profile.voice}`);
+            throw new Error(`Invalid ZEN-TTS waveform for ${profile.voice}`);
           }
           if (pcms.length > 0) {
             pcms.push(new Float32Array(pauseSamples));
@@ -627,7 +536,12 @@ self.onmessage = async (event) => {
 
         const wavBuffer = encodeNormalizedWav(merged, SAMPLE_RATE);
         const durationSec = merged.length / SAMPLE_RATE;
-        return { wavBuffer, durationSec, usedVoice: profile.voice };
+        return {
+          wavBuffer,
+          durationSec,
+          usedVoice: profile.voice,
+          usedBackend: entry.backend,
+        };
       });
 
       self.postMessage(
@@ -636,8 +550,8 @@ self.onmessage = async (event) => {
           requestId,
           wavBuffer,
           durationSec,
-          model: `kokoro:${usedVoice}`,
-          device: loadedDevice,
+          model: `zen-tts:${usedVoice}`,
+          device: usedBackend,
         },
         [wavBuffer]
       );

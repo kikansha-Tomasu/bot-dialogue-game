@@ -863,19 +863,21 @@ class Game {
       const modeLabel = isHfLocal
         ? "Hugging Face Style-Bert-VITS2 JP-Extra (あみたろ / jvnv-M1 / jvnv-F2)"
         : isHfBrowser
-          ? `Hugging Face ニューラル音声: ${ttsManager.activeVoiceLabel || "Kokoro-82M 24kHz"}`
+          ? `${ttsManager.activeVoiceLabel || "ZEN-TTS 44.1kHz"}`
           : isHfBrowserLoading
-            ? `Hugging Face ニューラル音声を読込中 (${ttsManager.browserTtsProgress || 0}%)`
+            ? `日本語ニューラル音声を読込中 (${ttsManager.browserTtsProgress || 0}%)`
             : `自然日本語ブラウザ音声 (${ttsManager.activeVoiceLabel || "Web Speech API"})`;
       ttsBtn.textContent = !on
         ? "🔇 音声OFF"
         : blocked
           ? "🔇 タップで音ON"
-          : (isHfLocal || isHfBrowser)
+          : isHfLocal
             ? "🔊 HF音声ON"
-            : isHfBrowserLoading
-              ? `⏳ HF音声 ${ttsManager.browserTtsProgress || 0}%`
-              : "🔊 ブラウザ音声";
+            : isHfBrowser
+              ? "🔊 AI音声ON"
+              : isHfBrowserLoading
+                ? `⏳ 音声 ${ttsManager.browserTtsProgress || 0}%`
+                : "🔊 ブラウザ音声";
       ttsBtn.setAttribute("aria-pressed", String(on && !blocked));
       ttsBtn.title = !on
         ? "読み上げOFF — クリックで有効化"
