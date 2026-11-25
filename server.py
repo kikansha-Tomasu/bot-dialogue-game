@@ -107,7 +107,7 @@ HF_CHARACTER_PROFILES = {
         "style_weight": 1.0,
         "few_shot": [
             {"role": "user", "content": "Player「こんにちは！今日は何をしてるの？」"},
-            {"role": "assistant", "content": "@Player こんにちは！広場を歩き回りながら、相場の動きと畑の育ち具合を観察しているところだよ。何か面白いこと見つけた？"},
+            {"role": "assistant", "content": "こんにちは！広場を歩き回りながら、相場の動きと畑の育ち具合を観察しているところだよ。何か面白いこと見つけた？"},
         ],
     },
     "bob": {
@@ -123,7 +123,7 @@ HF_CHARACTER_PROFILES = {
         "style_weight": 1.0,
         "few_shot": [
             {"role": "user", "content": "Player「こんにちは！今日は何をしてるの？」"},
-            {"role": "assistant", "content": "@Player 静かな風を感じながら、この街の移ろいを眺めていたよ。焦らず畑を育てて、豊かな実りを待つつもりさ。"},
+            {"role": "assistant", "content": "静かな風を感じながら、この街の移ろいを眺めていたよ。焦らず畑を育てて、豊かな実りを待つつもりさ。"},
         ],
     },
     "carol": {
@@ -139,7 +139,7 @@ HF_CHARACTER_PROFILES = {
         "style_weight": 1.0,
         "few_shot": [
             {"role": "user", "content": "Player「こんにちは！今日は何をしてるの？」"},
-            {"role": "assistant", "content": "@Player こんにちは！畑で新鮮な野菜を育てて、とびきり美味しい料理を作ろうと思ってるところだよ！"},
+            {"role": "assistant", "content": "こんにちは！畑で新鮮な野菜を育てて、とびきり美味しい料理を作ろうと思ってるところだよ！"},
         ],
     },
 }
@@ -325,7 +325,13 @@ def sanitize_tts_text(raw_text: str) -> str:
     純粋な日本語話し言葉へ変換する。
     """
     text = str(raw_text or "").strip()
-    text = re.sub(r"^[@＠]\w+\s*", "", text)
+    # Python の \w は日本語も一致するため ASCII 名＋明示的日本語別名のみ除去（助詞直結「@Bobの〜」を壊さない）
+    text = re.sub(
+        r"^[@＠](?:[A-Za-z0-9_]+|全員|みんな|皆さん|みなさん|アリス|ボブ|キャロル|プレイヤー)"
+        r"(?:(?:さん|くん|君|ちゃん|様)[\s、,:：!！]*|[\s、,:：!！]+)",
+        "",
+        text,
+    )
 
     # 資源・コイン・レベル表記を自然な日本語読みに変換
     text = re.sub(r"🪵\s*(?:木材)?\s*[×x]?\s*(\d+)", r"木材\1個", text)
@@ -440,16 +446,23 @@ def _detect_character_profile(requested_model: str, messages: list) -> dict:
 
 
 def _extract_target_mention(messages: list) -> str:
-    """user メッセージ末尾のメンション指定（@Player 等）を抽出"""
+    """user メッセージの相手指定（@Player / Playerへのセリフ 等）を抽出。全員向けなら空文字を返す。"""
     for m in reversed(messages):
         if m.get("role") == "user":
             text = m.get("content", "")
-            hit = re.search(r"[@＠](Player|Alice|Bob|Carol)\b", text, re.IGNORECASE)
+            if "特定の相手への@メンションは不要" in text or "周囲のみんなに聞こえるように" in text:
+                return ""
+            hit = re.search(
+                r"(?:[@＠](Player|Alice|Bob|Carol)(?![A-Za-z0-9_])"
+                r"|(Player|Alice|Bob|Carol)(?:へのセリフ|に向かって|へ直接|があなた))",
+                text,
+                re.IGNORECASE,
+            )
             if hit:
-                name = hit.group(1)
+                name = hit.group(1) or hit.group(2)
                 return name[0].upper() + name[1:].lower()
             break
-    return "Player"
+    return ""
 
 
 def _cuda_available() -> bool:
@@ -560,8 +573,18 @@ def _clean_dialogue_output(raw_text: str, target_name: str) -> str:
     first = lines[0] if lines else ""
     for src, dst in (("发现", "発見"), ("药", "薬"), ("气", "気"), ("乐", "楽"), ("买", "買"), ("卖", "売"), ("钱", "銭")):
         first = first.replace(src, dst)
-    # メンション重複を整理
-    first = re.sub(r"^[@＠]\w+\s*", "", first).strip()
+    # メンション重複を整理（Python \w は日本語にも一致するため ASCII 名＋別名＋区切りのみ安全に除去）
+    first = re.sub(
+        r"^[@＠](?:[A-Za-z0-9_]+|全員|みんな|皆さん|みなさん|アリス|ボブ|キャロル|プレイヤー)"
+        r"(?:(?:さん|くん|君|ちゃん|様)[\s、,:：!！]*|[\s、,:：!！]+)",
+        "",
+        first,
+    ).strip()
+    first = re.sub(
+        r"[@＠](全員|みんな|皆さん|みなさん|アリス|ボブ|キャロル|プレイヤー|[A-Za-z0-9_]+)",
+        r"\1",
+        first,
+    ).strip()
     if not first:
         return ""
     # 2文まで自然に保持
@@ -572,7 +595,7 @@ def _clean_dialogue_output(raw_text: str, target_name: str) -> str:
         first = first[:matches[0].end()].strip()
     elif not matches and len(first) > 4:
         first = first.rstrip("、, ") + "。"
-    return f"@{target_name} {first}".strip()
+    return f"@{target_name} {first}".strip() if target_name else first
 
 
 def _generate_with_llama_cpp(
@@ -631,7 +654,8 @@ def _generate_with_llama_cpp(
     if is_master_action:
         reply = raw_reply
     else:
-        reply = _clean_dialogue_output(raw_reply, target_name) or f"@{target_name} こんにちは！"
+        fallback_hi = f"@{target_name} こんにちは！" if target_name else "こんにちは！"
+        reply = _clean_dialogue_output(raw_reply, target_name) or fallback_hi
 
     return {
         "id": "hf-local-llama-cpp",

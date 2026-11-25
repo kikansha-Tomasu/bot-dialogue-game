@@ -112,7 +112,9 @@ class ChatManager {
   }
 
   _stripMention(text) {
-    return String(text ?? "").replace(/^[@＠]\w+\s*/, "").trim();
+    return String(text ?? "")
+      .replace(/^[@＠](?:[A-Za-z0-9_]+|全員|みんな|皆さん|みなさん|アリス|ボブ|キャロル|プレイヤー)(?:(?:さん|くん|君|ちゃん|様)[\s、,:：!！]*|[\s、,:：!！]+)/, "")
+      .trim();
   }
 
   _sanitizeColor(color) {

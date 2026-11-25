@@ -59,7 +59,10 @@ function isCorruptedJapanese(rawText, allowStructuredPlan = false) {
     return !/(?:PLAN|FOCUS)\s*[:：]\s*(gather|farm|trade|build|chat)/i.test(text);
   }
 
+  // WebGPU ブラックリスト判定は純粋な数値・トークン崩壊のみに限定する
+  // （敬称や語頭フレーズの整形・再試行は api.js 側で実施し、誤検知で WebGPU を落とさない）
   const body = text
+    .replace(/^[@＠](?:[A-Za-z0-9_]+|全員|みんな|皆さん|みなさん|アリス|ボブ|キャロル|プレイヤー)(?:さん|くん|君|ちゃん|様)?[\s、,:：!！]*/, "")
     .replace(/[@＠][A-Za-z0-9_]+/g, "")
     .replace(/[\u{1F000}-\u{1FAFF}\u2600-\u27BF\uFE0F]/gu, "")
     .trim();

@@ -381,8 +381,11 @@ class Character {
   }
 
   setSpeechBubble(text, durationSec = GAME_CONFIG.speechBubbleDuration) {
-    const clean = String(text || "").replace(/^[@＠]\w+\s*/, "").trim();
-    const shortened = clean.length > 56 ? clean.slice(0, 54) + "…" : clean;
+    const clean = String(text || "")
+      .replace(/^[@＠](?:[A-Za-z0-9_]+|全員|みんな|皆さん|みなさん|アリス|ボブ|キャロル|プレイヤー)(?:(?:さん|くん|君|ちゃん|様)[\s、,:：!！]*|[\s、,:：!！]+)/, "")
+      .trim();
+    const chars = [...clean];
+    const shortened = chars.length > 56 ? chars.slice(0, 54).join("") + "…" : clean;
     const dur = Math.max(1.5, Number(durationSec) || GAME_CONFIG.speechBubbleDuration);
     this.speechBubble = {
       text: shortened,
@@ -529,7 +532,8 @@ class Character {
     if (current) lines.push(current);
     const finalLines = lines.slice(0, 2);
     if (lines.length > 2) {
-      finalLines[1] = finalLines[1].slice(0, Math.max(1, finalLines[1].length - 1)) + "…";
+      const lineChars = [...finalLines[1]];
+      finalLines[1] = lineChars.slice(0, Math.max(1, lineChars.length - 1)).join("") + "…";
     }
 
     const lineH = 16;

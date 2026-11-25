@@ -16,6 +16,7 @@ class AIBrain {
     this.pendingPlayerMessages = {};
     this.chatTimers = {};
     this.driftTimers = {};
+    this._lastAutoReplyAt = 0;
 
     this.aiChars.forEach((c, i) => {
       this.chatTimers[c.id] = 10 + i * 7 + Math.random() * 5;
@@ -399,7 +400,6 @@ class AIBrain {
           (o.posterRef.inventory[o.sellType] || 0) >= o.sellAmount
         )
       : [];
-    const nearest = this._nearestOther(c);
 
     const townLine = this.progression
       ? `現在の街レベル: Lv.${this.progression.townLevel}「${this.progression.getTownSpec().name}」\n`
@@ -434,7 +434,7 @@ class AIBrain {
 
     let planText = null;
     try {
-      planText = await this.apiClient.callAIForMasterAction(c, context, nearest?.name || "Player", compactContext);
+      planText = await this.apiClient.callAIForMasterAction(c, context, "", compactContext);
       if (planText) {
         if (!this.llmAvailable) {
           this.llmAvailable = true;
@@ -479,7 +479,7 @@ class AIBrain {
       if (targetMatch) {
         chatTarget = others.find(x => x.name.toLowerCase() === targetMatch[1].toLowerCase());
       }
-      c.chatTarget = chatTarget ?? others[Math.floor(Math.random() * others.length)];
+      c.chatTarget = chatTarget ?? this._pickRelevantChatTarget(c);
       c._pendingChatMessage = msgMatch ? msgMatch[1].trim() : null;
     }
   }
@@ -548,56 +548,130 @@ class AIBrain {
     return !("mode" in this.apiClient) || this.apiClient.hfAvailable === true;
   }
 
-  // 採集・農業・料理・取引・建築・街発展などのリアクションを定型文ではなくLLMに考えさせる
-  async _speakActionViaLLM(char, target, actionFact, fallbackText, preGeneratedMsg = null) {
-    if (!char || !target) return;
+  // 近くに相手がいればそのキャラへ、周囲に誰もいなければ「全員」向け発言（ランダムな遠距離メンションを廃止）
+  _pickNearbyOrBroadcastTarget(char, maxDist = 180) {
+    const nearest = this._nearestOther(char);
+    if (!nearest) return null;
+    const dist = Math.hypot(nearest.x - char.x, nearest.y - char.y);
+    return dist <= maxDist ? nearest : null;
+  }
 
-    const sanitizedPre = LMStudioClient.sanitizeAnnounceMessage(preGeneratedMsg, target.name);
+  // 会話を始める相手をランダムではなく状況（近距離・対抗ライバル）から選ぶ
+  _pickRelevantChatTarget(char) {
+    const others = this.characters.filter(c => c.id !== char.id);
+    if (!others.length) return null;
+    const nearby = this._pickNearbyOrBroadcastTarget(char, 190);
+    if (nearby) return nearby;
+    const rivalName = char.strategy?.targetRival;
+    if (rivalName) {
+      const rival = others.find(c => c.name === rivalName);
+      if (rival) return rival;
+    }
+    return this._nearestOther(char) || others[0];
+  }
+
+  // AI同士の自然な選択的返信（全部に返信せず一部は自然に無視・クールダウン制御付き）
+  _buildActionReplyTrigger(speaker, recipient, messageText, options = {}) {
+    const isBroadcast = !recipient;
+    const replyRate = typeof options.replyRate === "number"
+      ? options.replyRate
+      : (isBroadcast ? 0.4 : 0.55);
+
+    if (recipient && recipient.isPlayer) return null;
+    if (options.noReply) return null;
+
+    return () => {
+      if (Math.random() >= replyRate) return;
+      const now = Date.now();
+      if (now - this._lastAutoReplyAt < 4000) return;
+
+      let responder = null;
+      if (recipient && !recipient.isPlayer) {
+        if (!this.isProcessing[recipient.id] && !recipient.isTalking) {
+          responder = recipient;
+        }
+      } else {
+        // 全員向け発言（出品・収穫等）には手が空いているAIのうち近い／関心のある1人が反応
+        const idleAIs = this.aiChars
+          .filter(c => c.id !== speaker.id && !this.isProcessing[c.id] && !c.isTalking)
+          .sort((a, b) =>
+            Math.hypot(a.x - speaker.x, a.y - speaker.y) -
+            Math.hypot(b.x - speaker.x, b.y - speaker.y)
+          );
+        responder = idleAIs[0] || null;
+      }
+
+      if (!responder) return;
+      this._lastAutoReplyAt = now;
+      setTimeout(() => {
+        if (this.isProcessing[responder.id] || responder.isTalking) return;
+        this._triggerReply(responder, speaker, messageText, 1);
+      }, GAME_CONFIG.aiReplyDelay);
+    };
+  }
+
+  // 採集・農業・料理・取引・建築・街発展などのリアクションを定型文ではなくLLMに考えさせる
+  async _speakActionViaLLM(char, target, actionFact, fallbackText, preGeneratedMsg = null, options = {}) {
+    if (!char) return;
+    const isBroadcast = !target;
+    const recipientId = isBroadcast ? "all" : target.id;
+    const recipientName = isBroadcast ? "全員" : target.name;
+    const mentionName = isBroadcast ? null : target.name;
+
+    const sanitizedPre = LMStudioClient.sanitizeAnnounceMessage(preGeneratedMsg, mentionName);
     if (sanitizedPre) {
-      this._presentResponse(char, sanitizedPre, target.id, target.name, null);
+      const triggerAfter = this._buildActionReplyTrigger(char, target, sanitizedPre, options);
+      this._presentResponse(char, sanitizedPre, recipientId, recipientName, triggerAfter);
       return;
     }
 
+    const cleanFallback = LMStudioClient.sanitizeAnnounceMessage(fallbackText, mentionName) || fallbackText;
     if (!this._canUseLLMForSpeech() || this.isProcessing[char.id]) {
-      this._presentResponse(char, fallbackText, target.id, target.name, null);
+      const triggerAfter = this._buildActionReplyTrigger(char, target, cleanFallback, options);
+      this._presentResponse(char, cleanFallback, recipientId, recipientName, triggerAfter);
       return;
     }
 
     this.isProcessing[char.id] = true;
     char.isTalking = true;
     char.isTyping = true;
-    char.talkingTo = target;
-    if (typeof char.faceToward === "function") char.faceToward(target);
-    const thinkingTypingId = this.chatManager.addTypingIndicator(char.name, char.color, target.name);
+    char.talkingTo = target || null;
+    if (target && typeof char.faceToward === "function") char.faceToward(target);
+    const thinkingTypingId = this.chatManager.addTypingIndicator(char.name, char.color, recipientName);
     char._activeTypingId = thinkingTypingId;
 
     try {
-      const invSummary = getInventorySummary(char.inventory) || "なし";
+      const invSummary = getInventorySummary(char.inventory, 5) || "なし";
       const rankInfo = this._getCharRank(char);
       const s = this._ensureStrategy(char);
       const strategyHint = s
         ? `【あなたの戦法・作戦（内部方針なのでそのまま暴露せず会話に活かす）】${s.styleLabel}：${s.goal}\n`
         : "";
+      const audienceLine = isBroadcast
+        ? `この出来事について、周囲のみんなに聞こえるように${char.name}らしい自然な日本語で1〜2文だけ感想や呼びかけを言ってください。特定の相手への@メンションは不要です。`
+        : `この出来事について、近くにいた${target.name}に向かって${char.name}らしい自然な日本語で1〜2文だけ話しかけてください。`;
       const prompt =
         `【いま起きた出来事】${actionFact}\n` +
         `【現在の状況】持ち物: ${invSummary} ／ 総資産ランキング${rankInfo.rank}位（${rankInfo.total.toFixed(1)}🪙）\n` +
         strategyHint +
-        `この出来事について、@${target.name} に向かって${char.name}らしい自然な日本語で1〜2文だけ感想や次の狙いを話しかけてください。定型文ではなく今の状況に合わせた言葉にしてください。`;
+        `${audienceLine}定型文ではなく今の状況に合わせた言葉にしてください。`;
 
       const response = await this.apiClient.callAI(
         char,
         prompt,
-        target.name,
+        mentionName,
         `(${actionFact})`
       );
       if (!this.llmAvailable) {
         this.llmAvailable = true;
         if (this.onStateChange) this.onStateChange();
       }
-      this._presentResponse(char, response, target.id, target.name, null);
+      const triggerAfter = this._buildActionReplyTrigger(char, target, response, options);
+      this._presentResponse(char, response, recipientId, recipientName, triggerAfter);
     } catch (err) {
       console.warn(`[AIBrain] ${char.name} action speech fallback:`, err.message);
-      this._presentResponse(char, fallbackText, target.id, target.name, null);
+      const triggerAfter = this._buildActionReplyTrigger(char, target, cleanFallback, options);
+      this._presentResponse(char, cleanFallback, recipientId, recipientName, triggerAfter);
     } finally {
       this.isProcessing[char.id] = false;
       this._drainPendingPlayerMessage(char);
@@ -616,13 +690,13 @@ class AIBrain {
       ? `${counterparty.name}があなたの買い注文に応じてくれ、🪙${coinQty}で${itemName}×${resQty}を購入できた`
       : `${counterparty.name}があなたの売り注文を買ってくれ、${itemName}×${resQty}を🪙${coinQty}で売却できた`;
     const fallback = `@${counterparty.name} ${itemName}×${resQty}の取引ありがとう！`;
-    this._speakActionViaLLM(aiChar, counterparty, actionFact, fallback, null);
+    this._speakActionViaLLM(aiChar, counterparty, actionFact, fallback, null, { noReply: true });
   }
 
   _executePlanTrade(char, planText) {
     const ALL_ITEMS = this._getTradableItemTypes();
     const decision = planText ? this._parseTradeDecision(planText) : null;
-    const target = this._nearestOther(char);
+    const target = this._pickNearbyOrBroadcastTarget(char);
 
     if (decision) {
       const { action, resource, amount, coins } = decision;
@@ -636,7 +710,7 @@ class AIBrain {
           const itemLabel = `${RESOURCE_EMOJI[executed.resourceType] || ""}${RESOURCE_LABEL[executed.resourceType] || executed.resourceType}`;
           const actionFact = `${executed.posterName}の取引板注文を成立させ、${itemLabel}×${executed.resourceQty}と🪙${executed.coinQty}を交換した`;
           const fallback = `@${executed.posterName} ${itemLabel}×${executed.resourceQty}の取引が成立したよ！`;
-          this._speakActionViaLLM(char, posterTarget, actionFact, fallback, customMsg);
+          this._speakActionViaLLM(char, posterTarget, actionFact, fallback, customMsg, { replyRate: 0.65 });
           return;
         }
       } else if (action === "skip") {
@@ -650,8 +724,8 @@ class AIBrain {
             if (!order._wasFullyMatched) {
               const itemLabel = `${RESOURCE_EMOJI[resource]}${RESOURCE_LABEL[resource]}`;
               const actionFact = `取引板に${itemLabel}×${sellAmt}を🪙${coins}で売り注文を出した`;
-              const fallback = `@${target.name} ${itemLabel}×${sellAmt}を🪙${coins}で売りに出したよ！`;
-              this._speakActionViaLLM(char, target, actionFact, fallback, customMsg);
+              const fallback = `${itemLabel}×${sellAmt}を🪙${coins}で取引板に売りに出したよ！`;
+              this._speakActionViaLLM(char, null, actionFact, fallback, customMsg, { replyRate: 0.45 });
             }
             return;
           }
@@ -665,8 +739,8 @@ class AIBrain {
             if (!order._wasFullyMatched) {
               const itemLabel = `${RESOURCE_EMOJI[resource]}${RESOURCE_LABEL[resource]}`;
               const actionFact = `取引板に🪙${spendCoin}で${itemLabel}×${amount}の買い注文を出した`;
-              const fallback = `@${target.name} 🪙${spendCoin}で${itemLabel}×${amount}を買いたいな！注文を出したよ`;
-              this._speakActionViaLLM(char, target, actionFact, fallback, customMsg);
+              const fallback = `🪙${spendCoin}で${itemLabel}×${amount}を買いたいな！取引板に注文を出したよ`;
+              this._speakActionViaLLM(char, null, actionFact, fallback, customMsg, { replyRate: 0.45 });
             }
             return;
           }
@@ -682,7 +756,7 @@ class AIBrain {
         const itemLabel = `${RESOURCE_EMOJI[executed.resourceType] || ""}${RESOURCE_LABEL[executed.resourceType] || executed.resourceType}`;
         const actionFact = `${executed.posterName}の取引板注文を成立させ、${itemLabel}×${executed.resourceQty}と🪙${executed.coinQty}を交換した`;
         const fallback = `@${executed.posterName} ${itemLabel}×${executed.resourceQty}の注文を成立させたよ！`;
-        this._speakActionViaLLM(char, posterTarget, actionFact, fallback, null);
+        this._speakActionViaLLM(char, posterTarget, actionFact, fallback, null, { replyRate: 0.65 });
         return;
       }
     }
@@ -761,8 +835,8 @@ class AIBrain {
     const actionFact = isBuy
       ? `取引板に🪙${coinQty}で${itemLabel}×${itemQty}の買い注文を出した`
       : `取引板に${itemLabel}×${itemQty}を🪙${coinQty}で売り注文を出した`;
-    const fallback = `@${target.name} ${itemLabel}×${itemQty}を🪙${coinQty}で取引板に出したよ！`;
-    this._speakActionViaLLM(char, target, actionFact, fallback, null);
+    const fallback = `${itemLabel}×${itemQty}を🪙${coinQty}で取引板に出したよ！`;
+    this._speakActionViaLLM(char, null, actionFact, fallback, null, { replyRate: 0.45 });
   }
 
   _executePlanBuild(char, planText) {
@@ -806,15 +880,15 @@ class AIBrain {
     const success = this.buildingManager.placeAtForChar(char, chosen);
     if (!success) return;
 
-    const target = this._nearestOther(char);
+    const target = this._pickNearbyOrBroadcastTarget(char);
     const r = BUILDING_RECIPES[chosen];
     const ben = BUILDING_BENEFITS[chosen];
     const msgMatch = planText?.match(/MESSAGE\s*[:：]\s*(.+)/i);
     const customMsg = msgMatch ? msgMatch[1].trim() : null;
     const prodNote = ben ? `（${RESOURCE_EMOJI[ben.generates]}${RESOURCE_LABEL[ben.generates]}を自動生産）` : "";
     const actionFact = `マップ上に${r.emoji}${r.name}を建築した${prodNote}`;
-    const fallback = `@${target.name} ${r.emoji}${r.name}を建てたよ！`;
-    this._speakActionViaLLM(char, target, actionFact, fallback, customMsg);
+    const fallback = `${r.emoji}${r.name}を建てたよ！`;
+    this._speakActionViaLLM(char, target, actionFact, fallback, customMsg, { replyRate: 0.45 });
   }
 
   _tryAIListItem(char, itemType) {
@@ -830,7 +904,7 @@ class AIBrain {
 
   _executePlanFarm(char, planText) {
     if (!this.farmManager) return;
-    const target = this._nearestOther(char);
+    const nearbyTarget = this._pickNearbyOrBroadcastTarget(char);
     const msgMatch = planText?.match(/MESSAGE\s*[:：]\s*(.+)/i);
     const customMsg = msgMatch ? msgMatch[1].trim() : null;
 
@@ -840,19 +914,24 @@ class AIBrain {
       const cropNames = harvested.map(r => `${r.crop.emoji}${r.crop.name}`).join("・");
       const cooked = this.farmManager.tryAICook(char, this.orderBook?.priceHistory);
       let actionFact = `畑から${cropNames}を収穫した`;
+      let listedOnMarket = false;
       if (cooked) {
         const listed = this._tryAIListItem(char, cooked.dishId);
-        actionFact += listed && !listed._wasFullyMatched
-          ? `。そのまま${cooked.recipe.emoji}${cooked.recipe.name}を調理し、取引板に🪙${listed.buyAmount}で売り注文を出した`
-          : `。そのまま${cooked.recipe.emoji}${cooked.recipe.name}を調理した`;
+        if (listed && !listed._wasFullyMatched) {
+          listedOnMarket = true;
+          actionFact += `。そのまま${cooked.recipe.emoji}${cooked.recipe.name}を調理し、取引板に🪙${listed.buyAmount}で売り注文を出した`;
+        } else {
+          actionFact += `。そのまま${cooked.recipe.emoji}${cooked.recipe.name}を調理した`;
+        }
       } else {
         const listed = this._tryAIListItem(char, harvested[0].crop?.id);
         if (listed && !listed._wasFullyMatched) {
+          listedOnMarket = true;
           actionFact += `。収穫物を取引板に🪙${listed.buyAmount}で売り注文を出した`;
         }
       }
-      const fallback = `@${target.name} ${cropNames}を収穫したよ！取引板で売ってみよう。`;
-      this._speakActionViaLLM(char, target, actionFact, fallback, customMsg);
+      const fallback = `${cropNames}を収穫したよ！取引板で売ってみよう。`;
+      this._speakActionViaLLM(char, listedOnMarket ? null : nearbyTarget, actionFact, fallback, customMsg, { replyRate: 0.45 });
       return;
     }
 
@@ -860,11 +939,12 @@ class AIBrain {
     const cookedOnly = this.farmManager.tryAICook(char, this.orderBook?.priceHistory);
     if (cookedOnly) {
       const listed = this._tryAIListItem(char, cookedOnly.dishId);
-      const actionFact = listed && !listed._wasFullyMatched
+      const listedOnMarket = Boolean(listed && !listed._wasFullyMatched);
+      const actionFact = listedOnMarket
         ? `収穫した食材で${cookedOnly.recipe.emoji}${cookedOnly.recipe.name}を調理し、取引板に🪙${listed.buyAmount}で売り注文を出した`
         : `収穫した食材で${cookedOnly.recipe.emoji}${cookedOnly.recipe.name}を調理した`;
-      const fallback = `@${target.name} ${cookedOnly.recipe.emoji}${cookedOnly.recipe.name}を作ったよ！`;
-      this._speakActionViaLLM(char, target, actionFact, fallback, customMsg);
+      const fallback = `${cookedOnly.recipe.emoji}${cookedOnly.recipe.name}を作ったよ！`;
+      this._speakActionViaLLM(char, listedOnMarket ? null : nearbyTarget, actionFact, fallback, customMsg, { replyRate: 0.45 });
       return;
     }
 
@@ -899,8 +979,8 @@ class AIBrain {
     if (!planted.ok) return;
 
     const actionFact = `農地に${chosenCrop.emoji}${chosenCrop.name}の種をまいた（収穫後に取引板で売る予定）`;
-    const fallback = `@${target.name} ${chosenCrop.emoji}${chosenCrop.name}の種をまいたよ！`;
-    this._speakActionViaLLM(char, target, actionFact, fallback, customMsg);
+    const fallback = `${chosenCrop.emoji}${chosenCrop.name}の種をまいたよ！`;
+    this._speakActionViaLLM(char, nearbyTarget, actionFact, fallback, customMsg, { replyRate: 0.35 });
   }
 
   _fallbackAction(c) {
@@ -960,8 +1040,7 @@ class AIBrain {
     else if (choice === "trade")  this._executePlanTrade(c, null);
     else if (choice === "build")  this._executePlanBuild(c, null);
     else {
-      const others = this.characters.filter(x => x.id !== c.id);
-      c.chatTarget = others[Math.floor(Math.random() * others.length)];
+      c.chatTarget = this._pickRelevantChatTarget(c);
     }
   }
 
@@ -1164,61 +1243,72 @@ class AIBrain {
   }
 
   _generateOfflineReply(char, targetName, incomingText = "") {
-    const inv = getInventorySummary(char.inventory) || "まだ空っぽ";
+    const inv = getInventorySummary(char.inventory, 4) || "まだ空っぽ";
     const orderCount = this.orderBook?.orders.length || 0;
     const rankInfo = this._getCharRank(char);
-    const rankStr = `今の私はランキング${rankInfo.rank}位（${rankInfo.total.toFixed(1)}🪙）`;
-    const myPlots = this.farmManager ? this.farmManager.getPlotsByOwner(char.id) : [];
-    const farmHint = myPlots.length > 0
-      ? `畑で${CROP_CATALOG[myPlots[0].cropId]?.emoji || "🌱"}${CROP_CATALOG[myPlots[0].cropId]?.name || "作物"}も育ててるよ！`
-      : "これから農地にも種をまいて資産を増やすよ！";
+    const rankStr = `いまランキング${rankInfo.rank}位（${rankInfo.total.toFixed(0)}🪙）`;
+    const isReply = Boolean(String(incomingText || "").trim());
     const hasTradeWord = /売|買|取引|コイン|交換|価格|板|発展|街|農|畑|ライバル|勝|負/.test(incomingText);
 
     const templates = {
       alice: hasTradeWord
         ? [
-            `ライバルとの駆け引きだね！${rankStr}、持ち物は ${inv} だよ。取引板で勝負しよう！`,
-            `ふむふむ、相場を推理中なんだ。板には${orderCount}件の注文があるね。${farmHint}`,
+            `取引の駆け引きなら大歓迎だよ！いまの持ち物は ${inv}、板には${orderCount}件の注文があるね。`,
+            `ふむふむ、相場が動いてきたね！条件が合えば取引板で勝負しようよ。`,
           ]
-        : [
-            `おっ、いいところに気づいたね！${rankStr}だよ。${farmHint}1位は譲らないからね！`,
-            `ライバル同士、負けないよ！最近は資源と農業でトップを狙ってるんだ。`,
-          ],
+        : isReply
+          ? [
+              `なるほど、面白い話だね！私は${rankStr}だから、これから相場で一気に追い上げるつもりだよ。`,
+              `そうなんだ！私もいま広場の様子を観察して次の一手を考えているところだよ。`,
+            ]
+          : [
+              `広場の相場をチェック中だよ！いま${rankStr}、取引板でいい掘り出し物がないか探してるんだ。`,
+              `資源や作物が余っていたら取引板に出してみてよ！私も負けずに稼ぐからね。`,
+            ],
       bob: hasTradeWord
         ? [
-            `富は風のように巡る…${rankStr}、手元には ${inv} がある。取引板で知恵を競おう。`,
-            `価値とは見る者の心次第さ。板には${orderCount}つの注文が並んでいる。${farmHint}`,
+            `富は風のように巡るものさ。手元には ${inv} がある、互いに納得できる条件なら取引板で交わろう。`,
+            `価値は需給が映す鏡だね。板には${orderCount}件の注文が並んでいるよ。`,
           ]
-        : [
-            `静かな広場に熱い競争の気配だね。${rankStr}、${farmHint}`,
-            `ふふ、良きライバルだ。木々や大地の恵みを育てて、やがて頂点へ辿り着こう。`,
-          ],
+        : isReply
+          ? [
+              `なるほど、興味深い視点だね。私は${rankStr}、焦らず資源と建物を整えていくよ。`,
+              `そうか…穏やかな広場にも熱い競争があるね。私は手堅く資産を育ててみせよう。`,
+            ]
+          : [
+              `静かな広場だね。私は建物を整えて、長期的に豊かな資産を築くつもりさ。`,
+              `いま${rankStr}だ。木材や石を集めて、着実に基盤を固めているところだよ。`,
+            ],
       carol: hasTradeWord
         ? [
-            `ライバルとの取引勝負かな？${rankStr}、持ち物は ${inv} だよ！板で交換しよう！`,
-            `農業も取引も料理の仕込みみたいだね！${farmHint}絶対に1位になるよ！`,
+            `取引のお話かな？いま持ち物は ${inv} だよ！おいしい料理や作物も板に出すから見てね！`,
+            `農業も取引も料理の仕込みみたいだね！いい条件ならぜひ取引板で交換しよう！`,
           ]
-        : [
-            `やっほー！${rankStr}だよ！${farmHint}ライバルには負けないからね！`,
-            `いいお天気だね！畑で作物をたっぷり育てて、資産ランキング1位のごちそうを作るよ！`,
-          ],
+        : isReply
+          ? [
+              `わあ、そうなんだね！私は${rankStr}だけど、畑の作物と料理で逆転してみせるよ！`,
+              `へぇ〜、楽しそうだね！私も負けずにとびきりの料理を作ってトップを狙うからね！`,
+            ]
+          : [
+              `いいお天気だね！畑で作物をたっぷり育てて、おいしい料理を取引板に出すよ！`,
+              `いま${rankStr}だよ！おいしい料理でライバルみんなをびっくりさせるからね！`,
+            ],
     };
 
-    const list = templates[char.id] || [`${rankStr}、持ち物は ${inv} だよ！取引板も見てみてね。`];
+    const list = templates[char.id] || [`いま${rankStr}、持ち物は ${inv} だよ！取引板も見てみてね。`];
     const body = list[Math.floor(Math.random() * list.length)];
-    return `@${targetName} ${body}`;
+    return targetName ? `@${targetName} ${body}` : body;
   }
 
   _announceGather(char, type, got = 1) {
-    const target = this._nearestOther(char);
-    if (!target) return;
+    const target = this._pickNearbyOrBroadcastTarget(char);
     const label = RESOURCE_LABEL[type] || type;
     const emoji = RESOURCE_EMOJI[type] || "";
     const pending = char._pendingAnnounceMessage;
     char._pendingAnnounceMessage = null;
     const actionFact = `${emoji}${label}を${got}個採集した`;
-    const fallback = `@${target.name} ${emoji}${label}を${got}個採集したよ！`;
-    this._speakActionViaLLM(char, target, actionFact, fallback, pending);
+    const fallback = `${emoji}${label}を${got}個採集したよ！`;
+    this._speakActionViaLLM(char, target, actionFact, fallback, pending, { replyRate: 0.4 });
   }
 
   _resetTimer(id) {
@@ -1347,8 +1437,11 @@ class AIBrain {
     if (this.isProcessing[initiator.id]) return;
     this.isProcessing[initiator.id] = true;
 
-    const others = this.characters.filter(c => c.id !== initiator.id);
-    const target = predeterminedTarget ?? others[Math.floor(Math.random() * others.length)];
+    const target = predeterminedTarget ?? this._pickRelevantChatTarget(initiator);
+    if (!target) {
+      this.isProcessing[initiator.id] = false;
+      return;
+    }
 
     // 会話生成中から立ち止まって相手の方を向く
     initiator.isTalking = true;
@@ -1364,35 +1457,33 @@ class AIBrain {
       const sanitizedPending = LMStudioClient.sanitizeAnnounceMessage(pendingMsg, target.name);
       if (sanitizedPending) {
         response = sanitizedPending;
+        const historyBody = LMStudioClient.stripLeadingMention(response, target.name);
         initiator.conversationHistory.push(
           { role: "user",      content: `(${target.name}に話しかける)` },
-          { role: "assistant", content: response }
+          { role: "assistant", content: historyBody || response }
         );
         if (initiator.conversationHistory.length > GAME_CONFIG.maxContextMessages) {
           initiator.conversationHistory = initiator.conversationHistory.slice(-GAME_CONFIG.maxContextMessages);
         }
       } else {
-        const recent = this.chatManager.getRecentMessages(5);
-        let contextStr = "";
-        if (recent.length > 0) {
-          contextStr =
-            "\n\n最近の会話の流れ：(「@name」でメンションしています。)" +
-            recent.map(m => `[${m.senderName}→${m.recipientName}]: ${m.text}`).join(" / ");
-        }
-        const econContext = this._buildChatEconomicContext(initiator);
-        const prompt = `あなたは${initiator.name}です。必ず@${target.name}に話しかけてください。${contextStr}
+        const recent = this.chatManager.getRecentMessages(4);
+        const recentStr = recent.length > 0
+          ? recent.map(m => `${m.senderName}→${m.recipientName}: ${LMStudioClient.stripLeadingMention(m.text)}`).join(" / ")
+          : "なし";
 
-${econContext}
-
-【チャットの目的】
-あなたの総資産を増やすために、相手に取引を持ちかけたり交渉したりしてください。
-- 自分の資源を相手に売りたい場合、魅力的な価格を提示して勧誘してください
-- 相手が持っている資源が欲しければ、交換や買取りを提案してください
-- 市場の状況や相手の在庫を踏まえ、具体的な数量・価格を提示するとより説得力があります
-- キャラクターとしての個性を活かした言い方で交渉してください
-- ただし、自分の内部戦略（なぜその取引をしたいか）は明かさないでください
-
-返答は必ず「@${target.name} 」で始め、1〜2文の短い日本語で話しかけてください。`;
+        const isCompact = this.apiClient?.mode === "browser-hf";
+        const prompt = isCompact
+          ? `あなたは${initiator.name}です。${target.name}へ直接話しかけてください。\n` +
+            `【自分の状況】${this._buildCompactStrategicContext(initiator)}\n` +
+            `【直近の会話】${recentStr}\n` +
+            `取引の提案・交渉・ライバルへの牽制など、${target.name}が返事したくなる具体的な1〜2文を自然な日本語で話しかけてください。`
+          : `あなたは${initiator.name}です。${target.name}に向かって話しかけてください。\n\n` +
+            `最近の会話の流れ: ${recentStr}\n\n${this._buildChatEconomicContext(initiator)}\n\n` +
+            `【チャットの目的】\n` +
+            `あなたの総資産を増やすために、相手に取引を持ちかけたり交渉したりしてください。\n` +
+            `- 自分の資源・作物・料理を売りたい場合、具体的な価格や数量を提示して勧誘してください\n` +
+            `- 相手の所持品が欲しければ買取りや提案をしてください\n` +
+            `- 内部戦略は明かさず、キャラクターの個性で自然に1〜2文で話しかけてください。`;
 
         response = await this.apiClient.callAI(initiator, prompt, target.name, `(${target.name}に話しかける)`);
         if (!this.llmAvailable) {
@@ -1401,12 +1492,7 @@ ${econContext}
         }
       }
 
-      const triggerAfter = target.isPlayer ? null : () => {
-        setTimeout(() => {
-          this._triggerReply(target, initiator, response, 1);
-        }, GAME_CONFIG.aiReplyDelay);
-      };
-
+      const triggerAfter = this._buildActionReplyTrigger(initiator, target, response, { replyRate: 0.75 });
       this._presentResponse(initiator, response, target.id, target.name, triggerAfter);
     } catch (err) {
       console.warn(`[AIBrain] ${initiator.name} chat fallback:`, err.message);
@@ -1415,7 +1501,8 @@ ${econContext}
         if (this.onStateChange) this.onStateChange();
       }
       const fallback = this._generateOfflineReply(initiator, target.name, "");
-      this._presentResponse(initiator, fallback, target.id, target.name, null);
+      const triggerAfter = this._buildActionReplyTrigger(initiator, target, fallback, { replyRate: 0.55 });
+      this._presentResponse(initiator, fallback, target.id, target.name, triggerAfter);
     } finally {
       this.isProcessing[initiator.id] = false;
       this._drainPendingPlayerMessage(initiator);
@@ -1423,40 +1510,45 @@ ${econContext}
   }
 
   async _triggerReply(responder, originalSender, originalText, depth = 1) {
+    if (!responder || !originalSender || responder.id === originalSender.id) return;
     if (this.isProcessing[responder.id]) return;
     this.isProcessing[responder.id] = true;
+    const prevSeq = responder._speechSeq || 0;
     responder.isTalking = true;
     responder.isTyping = true;
     responder.talkingTo = originalSender;
     if (typeof responder.faceToward === "function") responder.faceToward(originalSender);
 
     try {
-      const strippedText = originalText.replace(/^[@＠]\w+\s*/, "").trim();
-      const econContext = this._buildChatEconomicContext(responder);
-      const prompt = `${originalSender.name}があなた（${responder.name}）に話しかけました：「${strippedText}」。
-
-${econContext}
-
-【返答の指針】
-- 相手が取引を提案している場合、自分にとって有利かどうか判断して受け入れ・断り・カウンターオファーを返してください
-- 自分から別の取引や交渉を持ちかけても構いません
-- キャラクターの個性を保ちつつ、自分の総資産が最大になる行動を取ってください
-- 自分の内部戦略は明かさないでください
-
-@${originalSender.name}に返答してください（1〜2文の短い日本語で）。`;
+      const strippedText = LMStudioClient.stripLeadingMention(originalText);
+      const isCompact = this.apiClient?.mode === "browser-hf";
+      const prompt = isCompact
+        ? `【相手の直前の発言】${originalSender.name}があなた（${responder.name}）に言いました：「${strippedText}」\n` +
+          `【あなたの状況】${this._buildCompactStrategicContext(responder)}\n` +
+          `【返答のルール】${originalSender.name}が言った内容にきちんと反応し、賛成・断り・質問・逆提案などを${responder.name}らしい自然な日本語1〜2文で返答してください。`
+        : `${originalSender.name}があなた（${responder.name}）に話しかけました：「${strippedText}」。\n\n` +
+          `${this._buildChatEconomicContext(responder)}\n\n` +
+          `【返答の指針】\n` +
+          `- 相手の発言内容（「${strippedText}」）にきちんと噛み合う返答をしてください\n` +
+          `- 取引提案なら有利かどうか判断して受け入れ・断り・カウンターオファーを返してください\n` +
+          `- 自分の内部戦略は明かさず、キャラクターの個性で1〜2文の自然な日本語で返答してください。`;
       const response = await this.apiClient.callAI(
         responder,
         prompt,
         originalSender.name,
-        strippedText
+        `${originalSender.name}: ${strippedText}`
       );
       if (!this.llmAvailable) {
         this.llmAvailable = true;
         if (this.onStateChange) this.onStateChange();
       }
 
-      const triggerAfter = depth < 2 && Math.random() < 0.5 ? () => {
+      const triggerAfter = !originalSender.isPlayer && depth < 2 && Math.random() < 0.45 ? () => {
+        const now = Date.now();
+        if (now - this._lastAutoReplyAt < 4000) return;
+        this._lastAutoReplyAt = now;
         setTimeout(() => {
+          if (this.isProcessing[originalSender.id] || originalSender.isTalking) return;
           this._triggerReply(originalSender, responder, response, depth + 1);
         }, GAME_CONFIG.aiReplyDelay);
       } : null;
@@ -1464,10 +1556,23 @@ ${econContext}
       this._presentResponse(responder, response, originalSender.id, originalSender.name, triggerAfter);
     } catch (err) {
       console.warn(`[AIBrain] ${responder.name} reply fallback:`, err.message);
-      responder.isTalking = false;
-      responder.isTyping = false;
-      responder.isSpeaking = false;
-      responder.talkingTo = null;
+      // 他の割り込み発話（取引リアクション等）で _speechSeq が進んでいれば、その発話状態を壊さない
+      if ((responder._speechSeq || 0) === prevSeq) {
+        if (responder._activeTypingId) {
+          this.chatManager.removeTypingIndicator(responder._activeTypingId);
+          responder._activeTypingId = null;
+        }
+        if (!this._canUseLLMForSpeech() && depth === 1) {
+          const strippedText = LMStudioClient.stripLeadingMention(originalText);
+          const fallback = this._generateOfflineReply(responder, originalSender.name, strippedText);
+          this._presentResponse(responder, fallback, originalSender.id, originalSender.name, null);
+        } else {
+          responder.isTalking = false;
+          responder.isTyping = false;
+          responder.isSpeaking = false;
+          responder.talkingTo = null;
+        }
+      }
     } finally {
       this.isProcessing[responder.id] = false;
       this._drainPendingPlayerMessage(responder);
@@ -1490,24 +1595,23 @@ ${econContext}
     if (typeof targetChar.faceToward === "function") targetChar.faceToward(player);
 
     try {
-      const strippedMessage = playerMessage.replace(/^[@＠]\w+\s*/, "").trim();
-      const econContext = this._buildChatEconomicContext(targetChar);
-      const prompt = `${player.name}があなた（${targetChar.name}）に話しかけました：「${strippedMessage}」。
-
-${econContext}
-
-【返答の指針】
-- 相手が取引を提案している場合、自分にとって有利かどうか判断して受け入れ・断り・カウンターオファーを返してください
-- 自分から別の取引や交渉を持ちかけても構いません
-- キャラクターの個性を保ちつつ、自分の総資産が最大になる行動を取ってください
-- 自分の内部戦略は明かさないでください
-
-@${player.name}に返答してください（1〜2文の短い日本語で）。`;
+      const strippedMessage = playerMessage.replace(/^[@＠]\w+[\s、,:：]*/, "").trim();
+      const isCompact = this.apiClient?.mode === "browser-hf";
+      const prompt = isCompact
+        ? `【相手の直前の発言】${player.name}があなた（${targetChar.name}）に言いました：「${strippedMessage}」\n` +
+          `【あなたの状況】${this._buildCompactStrategicContext(targetChar)}\n` +
+          `【返答のルール】${player.name}の発言内容にきちんと反応して、${targetChar.name}らしい自然な日本語1〜2文で返答してください。`
+        : `${player.name}があなた（${targetChar.name}）に話しかけました：「${strippedMessage}」。\n\n` +
+          `${this._buildChatEconomicContext(targetChar)}\n\n` +
+          `【返答の指針】\n` +
+          `- 相手の発言（「${strippedMessage}」）にきちんと噛み合う返答をしてください\n` +
+          `- 取引提案なら有利かどうか判断して受け入れ・断り・カウンターオファーを返してください\n` +
+          `- 自分の内部戦略は明かさず、キャラクターの個性で1〜2文の自然な日本語で返答してください。`;
       const response = await this.apiClient.callAI(
         targetChar,
         prompt,
         player.name,
-        strippedMessage
+        `${player.name}: ${strippedMessage}`
       );
       if (!this.llmAvailable) {
         this.llmAvailable = true;
@@ -1515,13 +1619,25 @@ ${econContext}
       }
 
       const triggerAfter = Math.random() < 0.3 ? () => {
-        const bystanders = this.aiChars.filter(
-          c => c.id !== targetChar.id && !this.isProcessing[c.id]
-        );
+        const now = Date.now();
+        if (now - this._lastAutoReplyAt < 4000) return;
+        const bystanders = this.aiChars
+          .filter(c =>
+            c.id !== targetChar.id &&
+            !this.isProcessing[c.id] &&
+            !c.isTalking &&
+            Math.hypot(c.x - targetChar.x, c.y - targetChar.y) <= 220
+          )
+          .sort((a, b) =>
+            Math.hypot(a.x - targetChar.x, a.y - targetChar.y) -
+            Math.hypot(b.x - targetChar.x, b.y - targetChar.y)
+          );
         if (bystanders.length > 0) {
-          const bystander = bystanders[Math.floor(Math.random() * bystanders.length)];
+          this._lastAutoReplyAt = now;
+          const bystander = bystanders[0];
           setTimeout(() => {
-            this._triggerReply(bystander, targetChar, response);
+            if (this.isProcessing[bystander.id] || bystander.isTalking) return;
+            this._triggerReply(bystander, targetChar, response, 1);
           }, GAME_CONFIG.aiReplyDelay + 1500);
         }
       } : null;
@@ -1533,7 +1649,7 @@ ${econContext}
         this.llmAvailable = false;
         if (this.onStateChange) this.onStateChange();
       }
-      const stripped = playerMessage.replace(/^[@＠]\w+\s*/, "").trim();
+      const stripped = playerMessage.replace(/^[@＠]\w+[\s、,:：]*/, "").trim();
       const fallback = this._generateOfflineReply(targetChar, player.name, stripped);
       this._presentResponse(targetChar, fallback, player.id, player.name, null);
     } finally {

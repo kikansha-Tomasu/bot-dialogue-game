@@ -990,7 +990,8 @@ test("LLM Output Quality & Action Speech: rejects garbled WebGPU tokens, removes
     _workerReady: true,
     async callAI(char, prompt, targetName) {
       promptsSent.push({ charId: char.id, prompt, targetName });
-      return `@${targetName} いい木材が見つかったよ！あとで取引板で勝負しようね。`;
+      const body = "いい木材が見つかったよ！あとで取引板で勝負しようね。";
+      return targetName ? `@${targetName} ${body}` : body;
     },
   };
   const brain = new AIBrain(chars, cm, fakeApi, rm);
@@ -1003,14 +1004,17 @@ test("LLM Output Quality & Action Speech: rejects garbled WebGPU tokens, removes
     presented = { charId: char.id, response, recipientId, recipientName };
   };
 
-  // _pendingAnnounceMessage が空でも定型文を使わず LLM へ問い合わせること
+  // _pendingAnnounceMessage が空でも定型文を使わず LLM へ問い合わせ、周囲に誰もいなければ「全員」向けになること
   alice._pendingAnnounceMessage = null;
   brain._announceGather(alice, "wood", 1);
   await new Promise(r => setTimeout(r, 30));
 
   assert.equal(promptsSent.length, 1);
   assert.match(promptsSent[0].prompt, /木材を1個採集した/);
-  assert.equal(presented.response, `@${presented.recipientName} いい木材が見つかったよ！あとで取引板で勝負しようね。`);
+  assert.equal(promptsSent[0].targetName, null);
+  assert.equal(presented.recipientId, "all");
+  assert.equal(presented.recipientName, "全員");
+  assert.equal(presented.response, "いい木材が見つかったよ！あとで取引板で勝負しようね。");
 
   // プレイヤーの取引約定に対するAIリアクションもLLM生成になること
   brain.reactToTradeExecuted(alice, player, {
@@ -1134,4 +1138,207 @@ test("Character Strategy System: distinct archetypes, compact lossless context, 
   assert.equal(alice2.strategy.focusAction, "trade");
   assert.equal(alice2.strategy.targetItem, "carrot");
   assert.equal(alice2.strategy.revisionCount, 1);
+});
+
+test("Chat Quality: prevents mid-sentence fragment starts, removes odd offline line, uses smart mentions, and triggers selective AI replies", async () => {
+  // 1. 文中の @Name・助詞直結・二重かぎ括弧・日本語別名(@全員/@ボブ)・MESSAGE: を途中切り出しせずに正しく整形すること
+  assert.equal(
+    HuggingFaceClient.cleanDialogueResponse("「@Player こんにちは！次は@Playerと取引しよう！」", "Player"),
+    "@Player こんにちは！次はPlayerと取引しよう！"
+  );
+  assert.equal(
+    HuggingFaceClient.cleanDialogueResponse("@Bobさん、こんにちは！木材を交換しない？", "Bob"),
+    "@Bob こんにちは！木材を交換しない？"
+  );
+  assert.equal(
+    HuggingFaceClient.cleanDialogueResponse("@Bobさんこんにちは！木材を交換しない？", "Bob"),
+    "@Bob こんにちは！木材を交換しない？"
+  );
+  assert.equal(
+    HuggingFaceClient.cleanDialogueResponse("木材を @Bob からもらったよ！", "Bob"),
+    "@Bob 木材をBobからもらったよ！"
+  );
+  assert.equal(
+    HuggingFaceClient.cleanDialogueResponse("さっき @Bob がいってたよ！", "Bob"),
+    "@Bob さっきBobがいってたよ！"
+  );
+  assert.equal(
+    HuggingFaceClient.cleanDialogueResponse("こんにちは @Bob 元気にしてる？", "Bob"),
+    "@Bob こんにちは Bob 元気にしてる？"
+  );
+  assert.equal(
+    HuggingFaceClient.cleanDialogueResponse("@Bobはすごいね！次も勝負しよう。", "Bob"),
+    "@Bob Bobはすごいね！次も勝負しよう。"
+  );
+  assert.equal(
+    HuggingFaceClient.cleanDialogueResponse("@Bobと取引したいな！", "Bob"),
+    "@Bob Bobと取引したいな！"
+  );
+  assert.equal(
+    HuggingFaceClient.cleanDialogueResponse("「いい天気だね！」「そうだね！」", "Bob"),
+    "@Bob 「いい天気だね！」「そうだね！」"
+  );
+  assert.equal(
+    HuggingFaceClient.cleanDialogueResponse("MESSAGE: 木材を売ってみるよ！", "Bob"),
+    "@Bob 木材を売ってみるよ！"
+  );
+  assert.equal(
+    HuggingFaceClient.cleanDialogueResponse("@ボブ 木材を売ってくれない？", "Bob"),
+    "@Bob 木材を売ってくれない？"
+  );
+  // 全員向け (targetName=null) では @Alice / @全員 を剥がして本文のみ返し、助詞直結は名前を残すこと
+  assert.equal(
+    HuggingFaceClient.cleanDialogueResponse("@Alice いい木材が取れたよ！取引板に出そうかな。", null),
+    "いい木材が取れたよ！取引板に出そうかな。"
+  );
+  assert.equal(
+    HuggingFaceClient.cleanDialogueResponse("@全員 木材を取引板に売るよ！", null),
+    "木材を取引板に売るよ！"
+  );
+  assert.equal(
+    HuggingFaceClient.cleanDialogueResponse("@Bobはすごいね！私も負けないよ。", null),
+    "Bobはすごいね！私も負けないよ。"
+  );
+
+  // ChatManager / TTSManager / Character 吹き出しでも @全員 や @Alice、 が漏れず、絵文字のサロゲートペアも割れないこと
+  const { TTSManager } = require(path.join(rootDir, "js/tts.js"));
+  const cmCheck = new ChatManager();
+  assert.equal(cmCheck._stripMention("@全員 木材を売るよ！"), "木材を売るよ！");
+  assert.equal(cmCheck._stripMention("@Alice、こんにちは！"), "こんにちは！");
+  assert.equal(TTSManager.sanitizeForSpeech("@全員 木材を売るよ！"), "木材を売るよ！");
+  const bubbleChar = buildCharacters(800, 600)[0];
+  bubbleChar.setSpeechBubble("@Alice、こんにちは！");
+  assert.equal(bubbleChar.speechBubble.text, "こんにちは！");
+  bubbleChar.setSpeechBubble("🪵".repeat(60));
+  assert.equal(bubbleChar.speechBubble.text, "🪵".repeat(54) + "…", "サロゲートペアが途中で分断されないこと");
+
+  // 2. 「」や助詞・断片から始まる壊れた出力を確実に拒否し、自然な日本語（へー/ますます/より高く/とはいえ/君、/… 等）は通すこと
+  assert.equal(HuggingFaceClient.cleanDialogueResponse("「@Bob」に話しかけよう！", "Bob"), "");
+  for (const bad of [
+    "」に話しかけよう！",
+    "の畑どう？",
+    "と取引したいな",
+    "を売ろうかな",
+    "とはもう取引したよ",
+    "って本当なの？",
+    "さん、こんにちは！",
+    "んですか？",
+  ]) {
+    assert.equal(HuggingFaceClient.startsWithFragment(bad), true, `Should reject fragment: ${bad}`);
+    assert.equal(HuggingFaceClient.cleanDialogueResponse(bad, "Player"), "", `cleanDialogueResponse should reject: ${bad}`);
+  }
+  for (const good of [
+    "はい、いい条件だね！",
+    "でも今は木材が足りないよ。",
+    "とても良さそうな提案だね！",
+    "もしよかったら取引板を見てみて！",
+    "がんばろう、絶対に1位を取るよ！",
+    "にんじんを畑に植えてみたよ！",
+    "のんびり広場を歩きながら相場を見ているよ。",
+    "では、その条件で取引しよう。",
+    "へー、そうなんだ！面白いね。",
+    "はーい、任せてよ！",
+    "ますます盛り上がってきたね！",
+    "より高く売れるタイミングを探してるよ！",
+    "とはいえ、今は木材を温存したいな。",
+    "ないしょだけど、ニンジンが値上がりしそうだよ！",
+    "ですが、条件次第で考えるよ。",
+    "したごしらえはバッチリだよ！",
+    "すると相場が動くかもしれないね！",
+    "ね、ちょっと聞いてよ！",
+    "君、いい木材を持っているね。",
+    "から揚げみたいな料理も作りたいな！",
+    "…静かな風だね。",
+  ]) {
+    assert.equal(HuggingFaceClient.startsWithFragment(good), false, `Should allow natural Japanese: ${good}`);
+    assert.equal(HuggingFaceClient.cleanDialogueResponse(good, "Player"), `@Player ${good}`);
+  }
+
+  // Worker 側の isCorruptedJapanese は WebGPU ブラックリスト誤爆防止のため、敬称・語頭フレーズ判定を含まないこと
+  const workerSrc = fs.readFileSync(path.join(rootDir, "js/hf-browser-worker.js"), "utf8");
+  assert.equal(workerSrc.includes("さん|くん|君|ちゃん|様|さま"), false);
+
+  // 3. 謎のオフライン定型文「おっ、いいところに気づいたね！」が完全に消えていること
+  const chars = buildCharacters(800, 600);
+  const alice = chars.find(c => c.id === "alice");
+  const bob = chars.find(c => c.id === "bob");
+  const carol = chars.find(c => c.id === "carol");
+  const cm = new ChatManager();
+  const rm = new ResourceManager();
+  rm.init(800, 600);
+  const brain = new AIBrain(chars, cm, { mode: "browser-hf", _workerReady: true }, rm);
+  brain.orderBook = new OrderBook();
+  brain.tts = { enabled: false };
+
+  for (let i = 0; i < 30; i++) {
+    const initReply = brain._generateOfflineReply(alice, "Bob", "");
+    const directReply = brain._generateOfflineReply(alice, "Bob", "こんにちは！");
+    assert.equal(initReply.includes("いいところに気づいたね"), false);
+    assert.equal(directReply.includes("いいところに気づいたね"), false);
+  }
+
+  // 4. 遠距離ランダムメンション廃止：近くに誰もいなければ null（全員向け）、180px 以内なら近いキャラを返すこと
+  alice.x = 100; alice.y = 100;
+  bob.x = 500; bob.y = 500;
+  carol.x = 600; carol.y = 100;
+  const player = chars.find(c => c.id === "player");
+  player.x = 700; player.y = 500;
+  assert.equal(brain._pickNearbyOrBroadcastTarget(alice), null);
+
+  bob.x = 180; bob.y = 120; // dist = ~82px <= 180px
+  assert.equal(brain._pickNearbyOrBroadcastTarget(alice), bob);
+
+  // 5. AI同士の選択的返答：Bob へ向けた発言のあと、Bob が相手の発言内容（【相手の直前の発言】）を受け取って実際に返答すること
+  const replyCalls = [];
+  const presentedLogs = [];
+  brain.apiClient = {
+    mode: "browser-hf",
+    _workerReady: true,
+    async callAI(char, prompt, targetName) {
+      replyCalls.push({ charId: char.id, prompt, targetName });
+      return `@${targetName} なるほど、木材が欲しいなら取引板で相談しようか。`;
+    },
+  };
+  brain._presentResponse = (char, response, recipientId, recipientName, triggerAfter) => {
+    presentedLogs.push({ charId: char.id, response, recipientId, recipientName });
+    if (triggerAfter) triggerAfter();
+  };
+
+  // 一時的に aiReplyDelay を短縮してテスト
+  const origDelay = GAME_CONFIG.aiReplyDelay;
+  GAME_CONFIG.aiReplyDelay = 15;
+  try {
+    brain._lastAutoReplyAt = 0;
+    const trigger = brain._buildActionReplyTrigger(
+      alice,
+      bob,
+      "@Bob 木材を安く売ってくれない？",
+      { replyRate: 1.0 }
+    );
+    assert.equal(typeof trigger, "function");
+    trigger();
+    await new Promise(r => setTimeout(r, 80));
+
+    assert.equal(replyCalls.length, 1);
+    assert.equal(replyCalls[0].charId, "bob");
+    assert.equal(replyCalls[0].targetName, "Alice");
+    assert.match(replyCalls[0].prompt, /【相手の直前の発言】.*木材を安く売ってくれない？/);
+    assert.equal(presentedLogs.length, 1);
+    assert.equal(presentedLogs[0].charId, "bob");
+    assert.equal(presentedLogs[0].recipientName, "Alice");
+
+    // replyRate: 0 のときは自然に無視して返答しないこと
+    brain._lastAutoReplyAt = 0;
+    const silentTrigger = brain._buildActionReplyTrigger(
+      alice,
+      bob,
+      "@Bob 独り言だよ",
+      { replyRate: 0 }
+    );
+    silentTrigger();
+    await new Promise(r => setTimeout(r, 40));
+    assert.equal(replyCalls.length, 1);
+  } finally {
+    GAME_CONFIG.aiReplyDelay = origDelay;
+  }
 });

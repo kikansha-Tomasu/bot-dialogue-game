@@ -224,6 +224,33 @@ class TestServerSecurityAndAPI(unittest.TestCase):
         resp = self.client.post("/tts-local", json={"text": "   "})
         self.assertEqual(resp.status_code, 400)
 
+    def test_clean_dialogue_and_mention_strip_preserve_japanese_particles(self):
+        # Python の \w 誤爆で「@Bobの畑どう？」が「？」に消されないこと
+        self.assertEqual(
+            server._clean_dialogue_output("@Bobの畑どう？", "Bob"),
+            "@Bob Bobの畑どう？",
+        )
+        self.assertEqual(
+            server._clean_dialogue_output("@Bobさん、こんにちは！", "Bob"),
+            "@Bob こんにちは！",
+        )
+        self.assertEqual(
+            server._clean_dialogue_output("@全員 木材を売るよ！", ""),
+            "木材を売るよ！",
+        )
+        self.assertEqual(
+            server.sanitize_tts_text("@全員 木材を売るよ！"),
+            "木材を売るよ！",
+        )
+        self.assertEqual(
+            server._extract_target_mention([{"role": "user", "content": "周囲のみんなに聞こえるように感想を言ってください。特定の相手への@メンションは不要です。"}]),
+            "",
+        )
+        self.assertEqual(
+            server._extract_target_mention([{"role": "user", "content": "Bobへのセリフを自然な日本語で出力してください"}]),
+            "Bob",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

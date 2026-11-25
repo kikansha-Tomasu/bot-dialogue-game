@@ -1,15 +1,15 @@
 const HF_BROWSER_FEW_SHOT = {
   alice: [
     { role: "user", content: "こんにちは！調子はどう？" },
-    { role: "assistant", content: "@Player こんにちは！街の広場を観察しながら、畑の作物を育てて総資産1位を狙っているところだよ！" },
+    { role: "assistant", content: "こんにちは！街の広場を観察しながら、取引板でいい掘り出し物がないか探しているところだよ！" },
   ],
   bob: [
     { role: "user", content: "こんにちは！調子はどう？" },
-    { role: "assistant", content: "@Player 風が穏やかだね。静かに畑を育てながら、誰よりも豊かな資産を築くつもりさ。" },
+    { role: "assistant", content: "風が穏やかだね。静かに資源と建物を整えながら、誰よりも豊かな資産を築くつもりさ。" },
   ],
   carol: [
     { role: "user", content: "こんにちは！調子はどう？" },
-    { role: "assistant", content: "@Player こんにちは！畑で新鮮な野菜を育てて、美味しい料理を作ってランキング1位を目指すよ！" },
+    { role: "assistant", content: "こんにちは！畑で新鮮な野菜を育てて、美味しい料理を作ってランキング1位を目指すよ！" },
   ],
 };
 
@@ -99,7 +99,7 @@ class HuggingFaceClient {
       return;
     }
     try {
-      this._worker = new Worker("js/hf-browser-worker.js?v=gh14", { type: "module" });
+      this._worker = new Worker("js/hf-browser-worker.js?v=gh15", { type: "module" });
       this._workerLoading = true;
       this._workerError = "";
       this._workerStage = "connecting";
@@ -269,7 +269,7 @@ class HuggingFaceClient {
   static truncateToSentences(text, maxSentences = 2) {
     const str = String(text ?? "").trim();
     if (!str) return "";
-    const regex = /[。！？!?]+/g;
+    const regex = /[。！？!?]+[」』"”'）)]*/g;
     let count = 0;
     let match;
     while ((match = regex.exec(str)) !== null) {
@@ -281,6 +281,50 @@ class HuggingFaceClient {
     return str;
   }
 
+  // 閉じ括弧・句読点・助詞断片など、文の途中から切り出された不自然な書き出しを検出
+  // （「へー」「はーい」「ますます」「より高く」「とはいえ」「ないしょ」「ですが」「したく」「すると」「君、」「…」「から揚げ」等の自然な日本語は通す）
+  static startsWithFragment(rawBody) {
+    const s = String(rawBody ?? "").trim();
+    if (!s) return true;
+    // 閉じ括弧・句読点・小書き仮名・長音符（三点リーダー「…」は自然な沈黙表現のため許容）
+    if (/^[」』）)\]】、。,.!！?？:：・っゃゅょぁぃぅぇぉー]/.test(s)) return true;
+    // メンション剥がれで残った敬称単体（「君、」はBob等の自然な二人称のため除外）
+    if (/^(?:さん|くん|ちゃん|様|さま)(?:[\s、。！？!?,:：]|$)/.test(s)) return true;
+    // 文頭に来得ない単独の助詞・語尾断片（自然な自立語と衝突する語幹には境界条件を付ける）
+    if (/^(?:を|けど|けれど|ので|のに|って|には|への|との|にも|での|からの|までは|のが|のを|のも|のは|のこと|のほう|のため|のあと|のまえ|のなか|のうえ|のした|について|にとって|にたいして|にして|になって|になる|にする|にいく|にくる|にきいて|んです|んだよ|んだね|んだ|んで)/.test(s)) {
+      return true;
+    }
+    if (/^とは(?!いえ)/.test(s)) return true;
+    if (/^(?:より|です|ます|した|して|する|ない)(?:[。！？!?、\s]|$)/.test(s)) return true;
+    // 「が・へ・の・に・は・で・と・も・から」が直後に漢字/カタカナ(長音ー除く)/数字/空白/句読点を伴う助詞断片
+    if (/^から(?!揚|あげ)(?:[\u4E00-\u9FFF\u30A1-\u30FA0-9\s、。！？!?]|$)/.test(s)) return true;
+    if (/^(?:が|へ|の|に|は|で|と|も)(?:[\u4E00-\u9FFF\u30A1-\u30FA0-9\s、。！？!?]|$)/.test(s)) {
+      return true;
+    }
+    return false;
+  }
+
+  // 先頭の @メンション（ASCII名・日本語別名・敬称付き）のみ安全に除去（助詞直結「@Bobは〜」等は削らない）
+  static stripLeadingMention(rawText, targetName = null) {
+    let s = String(rawText ?? "").trim();
+    const aliasPattern = "(?:全員|みんな|皆さん|みなさん|アリス|ボブ|キャロル|プレイヤー)";
+    const targetPattern = targetName
+      ? `(?:${targetName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}|[A-Za-z0-9_]+|${aliasPattern})`
+      : `(?:[A-Za-z0-9_]+|${aliasPattern})`;
+    // 1) 明示的区切り付き、または敬称付き（@Bob こんにちは / @Bobさん、こんにちは / @Bobさんこんにちは / @全員 売るよ）
+    const delimRe = new RegExp(`^[@＠]${targetPattern}(?![A-Za-z0-9_])(?:(?:さん|くん|君|ちゃん|様)[\\s、,:：!！]*|[\\s、,:：!！]+|$)`, "i");
+    if (delimRe.test(s)) {
+      return s.replace(delimRe, "").trim();
+    }
+    // 2) 区切り無し直結でも、直後が英数字(部分一致バックトラック防止)・助詞・閉じ括弧でない場合のみ除去（例: @Playerこんにちは → こんにちは）
+    //    直後が助詞・閉じ括弧（@Bobは〜 / @Bobと〜 / @Bob」〜）なら削らず本文へ残す
+    const bareRe = new RegExp(`^[@＠]${targetPattern}(?![A-Za-z0-9_をがにのはでともへ]|から|より|まで|って|だ|じゃ|[」』）)\\]】])`, "i");
+    if (bareRe.test(s)) {
+      return s.replace(bareRe, "").trim();
+    }
+    return s;
+  }
+
   // WebGPU FP16崩壊やソフトマックス異常による文字化け・断片トークン列を検出
   static isCorruptedText(rawText) {
     const text = String(rawText ?? "").trim();
@@ -290,11 +334,12 @@ class HuggingFaceClient {
     // アクセント付きラテン文字（é, í, ǎ, ó 等の多言語崩壊トークン）
     if (/[\u00C0-\u024F\u1E00-\u1EFF]/.test(text)) return true;
 
-    const body = text
+    const body = HuggingFaceClient.stripLeadingMention(text)
       .replace(/[@＠][A-Za-z0-9_]+/g, "")
       .replace(/[\u{1F000}-\u{1FAFF}\u2600-\u27BF\uFE0F]/gu, "")
       .trim();
     if (!body) return true;
+    if (HuggingFaceClient.startsWithFragment(body)) return true;
 
     // 空白区切りの1〜2文字断片トークンが多発する典型的な崩壊パターン
     const tokens = body.split(/\s+/).filter(Boolean);
@@ -313,43 +358,87 @@ class HuggingFaceClient {
     return false;
   }
 
+  static _hasOuterMatchingQuotes(s, open, close) {
+    if (s.length < 2 || !s.startsWith(open) || !s.endsWith(close)) return false;
+    if (open === close) {
+      return s.indexOf(open, 1) === s.length - 1;
+    }
+    let depth = 0;
+    for (let i = 0; i < s.length; i++) {
+      if (s[i] === open) depth++;
+      else if (s[i] === close) {
+        depth--;
+        if (depth === 0 && i < s.length - 1) return false;
+      }
+    }
+    return depth === 0;
+  }
+
+  static _unwrapDialogueBody(rawBody) {
+    let s = String(rawBody ?? "").trim();
+    // 話者ラベルや前置きラベル（Alice: / 返答： / MESSAGE: 等）を除去
+    s = s.replace(/^(?:(?:Alice|Bob|Carol|Player|Assistant|MESSAGE|返答|返信|セリフ|発言)\s*[:：]\s*)+/i, "").trim();
+    // 全体を1組だけ囲うかぎ括弧・引用符のみ安全に除去（「A」「B」の途中破壊を防ぐ）
+    const pairs = [["「", "」"], ["『", "』"], ['"', '"'], ["'", "'"]];
+    for (let i = 0; i < 2; i++) {
+      let unwrapped = false;
+      for (const [open, close] of pairs) {
+        if (HuggingFaceClient._hasOuterMatchingQuotes(s, open, close)) {
+          s = s.slice(open.length, s.length - close.length).trim();
+          unwrapped = true;
+          break;
+        }
+      }
+      if (!unwrapped) break;
+    }
+    // 片側だけ残った不整合なかぎ括弧を整理
+    if (s.startsWith("「") && !s.includes("」")) s = s.slice(1).trim();
+    if (s.endsWith("」") && !s.includes("「")) s = s.slice(0, -1).trim();
+    if (s.startsWith("『") && !s.includes("』")) s = s.slice(1).trim();
+    if (s.endsWith("』") && !s.includes("『")) s = s.slice(0, -1).trim();
+    return s;
+  }
+
   static cleanDialogueResponse(rawText, targetName) {
     let text = HuggingFaceClient.stripReasoningTags(rawText);
     text = text.replace(/```[\s\S]*?```/g, "").trim();
+    // PLAN等の構造化メタ行を除去（MESSAGE: は行ごと消さずラベルだけ剥がす）
     text = text
-      .replace(/^(PLAN|RESOURCE|ACTION|AMOUNT|COINS|BUILD|CROP|TARGET|MESSAGE)\s*[:：][^\n]*/gim, "")
+      .replace(/^(PLAN|RESOURCE|ACTION|AMOUNT|COINS|BUILD|CROP|TARGET|FOCUS|TARGET_ITEM|GOAL)\s*[:：][^\n]*/gim, "")
+      .replace(/^MESSAGE\s*[:：]\s*/gim, "")
       .trim();
     text = text.replace(/\r?\n+/g, " ").replace(/\s{2,}/g, " ").trim();
+    text = HuggingFaceClient._unwrapDialogueBody(text);
 
+    // プレースホルダを除去
+    text = text.replace(/[@＠](?:nearest_name|TARGET名|相手の名前)[\s、,:：]*/gi, "").trim();
+
+    // 「@Bob」に話しかけよう！のような括弧囲みメンション＋助詞の三人称ナレーション断片を検出して拒否
     if (targetName) {
-      const escaped = targetName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const mentionRe = new RegExp(`[@＠]${escaped}\\s*`, "gi");
-      const matches = [...text.matchAll(mentionRe)];
-      if (matches.length > 0) {
-        const last = matches[matches.length - 1];
-        const body = text.slice(last.index + last[0].length).trim();
-        text = `@${targetName} ${body}`.trim();
-      } else {
-        text = text.replace(/^[@＠](?:nearest_name|TARGET名|相手の名前|\w+)\s*/i, "").trim();
-        text = `@${targetName} ${text}`.trim();
+      const esc = targetName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      if (new RegExp(`^[「『][@＠]${esc}[」』]`, "i").test(text)) {
+        return "";
       }
     }
 
+    // 文頭の @メンション のみ除去（文中の「木材を @Bob からもらったよ」や「@Bobはすごいね」を途中切り出ししない）
+    text = HuggingFaceClient.stripLeadingMention(text, targetName);
+    // 文中に残った @Name / @日本語別名 は自然な名前表記へ変換（途中で切らない）
+    text = text
+      .replace(/[@＠](全員|みんな|皆さん|みなさん|アリス|ボブ|キャロル|プレイヤー|[A-Za-z0-9_]+)/g, "$1")
+      .replace(/([\u3040-\u30FF\u4E00-\u9FFF])\s+([A-Za-z0-9_]+)\s+(?=(?:[をがにのはでともへ]|から|より|まで))/g, "$1$2")
+      .trim();
+    text = HuggingFaceClient._unwrapDialogueBody(text);
     text = HuggingFaceClient.truncateToSentences(text, 2);
-    if (HuggingFaceClient.isCorruptedText(text)) return "";
-    return text;
+    if (!text || HuggingFaceClient.isCorruptedText(text)) return "";
+
+    return targetName ? `@${targetName} ${text}`.trim() : text;
   }
 
   static sanitizeAnnounceMessage(rawMsg, targetName) {
     if (!rawMsg) return null;
-    let msg = HuggingFaceClient.stripReasoningTags(rawMsg);
-    msg = msg.replace(/^["「『]|["」』]$/g, "").trim();
-    msg = msg.replace(/[@＠](?:nearest_name|TARGET名|相手の名前)\s*/gi, "").trim();
-    msg = msg.replace(/^[@＠]\w+\s*/, "").trim();
-    if (!msg) return null;
-    msg = HuggingFaceClient.truncateToSentences(msg, 2);
-    if (HuggingFaceClient.isCorruptedText(msg)) return null;
-    return targetName ? `@${targetName} ${msg}` : msg;
+    const cleaned = HuggingFaceClient.cleanDialogueResponse(rawMsg, targetName || null);
+    return cleaned || null;
   }
 
   async _callDirectCloudRouter(messages, maxTokens) {
@@ -382,8 +471,8 @@ class HuggingFaceClient {
     const queueKey = this.mode === "browser-hf" ? "browser-hf" : model;
     return this._withQueue(queueKey, async () => {
       const promptWithHint = targetName
-        ? `${userMessage}\n（必ず「@${targetName} 」から始めて1〜2文の自然な日本語で返答してください）`
-        : userMessage;
+        ? `${userMessage}\n（${targetName}へのセリフを、かぎ括弧や@メンションは付けずに1〜2文の自然な日本語だけで出力してください）`
+        : `${userMessage}\n（かぎ括弧や@メンションは付けずに、1〜2文の自然な日本語だけで出力してください）`;
       const buildMessages = (history) => [
         { role: "system", content: character.personality },
         ...history,
@@ -487,9 +576,11 @@ class HuggingFaceClient {
         throw new Error("有効な返答を生成できませんでした");
       }
 
+      // 履歴には @メンション無しの自然な本文を保存し、小型モデルの不要な @出力癖を防ぐ
+      const historyBody = HuggingFaceClient.stripLeadingMention(text, targetName);
       character.conversationHistory.push(
         { role: "user", content: historyUserMessage ?? userMessage },
-        { role: "assistant", content: text }
+        { role: "assistant", content: historyBody || text }
       );
       if (character.conversationHistory.length > GAME_CONFIG.maxContextMessages) {
         character.conversationHistory = character.conversationHistory.slice(
@@ -580,12 +671,12 @@ class HuggingFaceClient {
 採集する場合：
 PLAN: gather
 RESOURCE: wood または stone または herb または fish
-MESSAGE: @${nearestName} （採集後にライバルへ言う一文。キャラの個性で自然に）
+MESSAGE: （採集後の一言。キャラの個性で自然に、かぎ括弧や@メンション不要）
 
 農業（種まき・収穫・料理）をする場合：
 PLAN: farm
 CROP: carrot または wheat または cabbage または tomato または corn または rice または pumpkin または strawberry
-MESSAGE: @${nearestName} （農業・収穫についてライバルへ言う一文。キャラの個性で自然に）
+MESSAGE: （農業・収穫についての一言。キャラの個性で自然に、かぎ括弧や@メンション不要）
 
 取引する場合：
 PLAN: trade
@@ -593,22 +684,22 @@ ACTION: sell または buy または execute または skip
 RESOURCE: 資源(wood/stone/herb/fish)・作物(carrot/wheat/cabbage/tomato/corn/rice/pumpkin/strawberry)・料理(carrot_salad/herb_bread/tomato_soup/onigiri_bento/pumpkin_pie/strawberry_tart)のいずれか
 AMOUNT: 数量（整数）
 COINS: コイン数（整数）
-MESSAGE: @${nearestName} （取引を知らせる一文。キャラの個性で自然に）
+MESSAGE: （取引をみんなに知らせる一言。キャラの個性で自然に、かぎ括弧や@メンション不要）
 
 建築する場合：
 PLAN: build
 BUILD: campfire または flowerBed または woodenFence または fishingSpot
-MESSAGE: @${nearestName} （建築を知らせる一文。キャラの個性で自然に）
+MESSAGE: （建築を知らせる一言。キャラの個性で自然に、かぎ括弧や@メンション不要）
 
 チャットで交渉・牽制・情報収集する場合：
 PLAN: chat
 TARGET: Alice または Bob または Carol または Player
-MESSAGE: @相手の名前 （キャラの個性で、取引交渉・ライバルへの牽制などを1〜2文で）
+MESSAGE: （相手へ語りかける1〜2文の自然なセリフ。かぎ括弧や@メンション不要）
 
 出力例（農業の場合）：
 PLAN: farm
 CROP: carrot
-MESSAGE: @${nearestName} 畑にニンジンを植えて資産を増やすよ！
+MESSAGE: 畑にニンジンを植えて資産を増やすよ！
 
 PLAN:の直後は必ず gather / farm / trade / build / chat のいずれかのみ。それ以外の言葉は絶対に使わないこと。`;
 

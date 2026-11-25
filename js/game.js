@@ -1305,7 +1305,7 @@ class Game {
       const chip = e.target.closest("[data-name]");
       if (!chip) return;
       const name = chip.dataset.name;
-      const body = input.value.replace(/^[@＠]\w+\s*/, "");
+      const body = input.value.replace(/^[@＠][A-Za-z0-9_]+[\s、,:：]*/, "");
       input.value = `@${name} ${body}`;
       input.focus();
     });

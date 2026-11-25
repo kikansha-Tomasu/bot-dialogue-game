@@ -132,7 +132,7 @@ class TTSManager {
       return;
     }
     try {
-      this._ttsWorker = new Worker("js/hf-tts-worker.js?v=gh14", { type: "module" });
+      this._ttsWorker = new Worker("js/hf-tts-worker.js?v=gh15", { type: "module" });
       this.browserTtsLoading = true;
       this.browserTtsError = "";
       this._ttsWorker.onmessage = (event) => {
@@ -550,7 +550,7 @@ class TTSManager {
 
   static sanitizeForSpeech(text) {
     return String(text || "")
-      .replace(/^[@＠]\w+\s*/, "")
+      .replace(/^[@＠](?:[A-Za-z0-9_]+|全員|みんな|皆さん|みなさん|アリス|ボブ|キャロル|プレイヤー)(?:(?:さん|くん|君|ちゃん|様)[\s、,:：!！]*|[\s、,:：!！]+)/, "")
       .replace(/🪵\s*(?:木材)?\s*[×x]?\s*(\d+)/g, "木材$1個")
       .replace(/🪨\s*(?:石)?\s*[×x]?\s*(\d+)/g, "石$1個")
       .replace(/🌿\s*(?:薬草)?\s*[×x]?\s*(\d+)/g, "薬草$1個")
