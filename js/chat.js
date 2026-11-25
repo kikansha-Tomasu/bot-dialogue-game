@@ -112,9 +112,18 @@ class ChatManager {
   }
 
   _stripMention(text) {
-    return String(text ?? "")
-      .replace(/^[@＠](?:[A-Za-z0-9_]+|全員|みんな|皆さん|みなさん|アリス|ボブ|キャロル|プレイヤー)(?:(?:さん|くん|君|ちゃん|様)[\s、,:：!！]*|[\s、,:：!！]+)/, "")
-      .trim();
+    const s = String(text ?? "").trim();
+    const aliasPattern = "(?:全員|みんな|皆さん|みなさん|アリス|ボブ|キャロル|プレイヤー)";
+    const delimRe = new RegExp(
+      `^[@＠](?:[A-Za-z0-9_]+|${aliasPattern})(?![A-Za-z0-9_])(?:(?:さん|くん|君|ちゃん|様)[\\s、,:：!！]*|[\\s、,:：!！]+|$)`
+    );
+    if (delimRe.test(s)) {
+      return s.replace(delimRe, "").trim();
+    }
+    const bareRe = new RegExp(
+      `^[@＠](?:[A-Za-z0-9_]+|${aliasPattern})(?![A-Za-z0-9_をがにのはでともへ]|から|より|まで|って|だ|じゃ|[」』）)\\]】])`
+    );
+    return s.replace(bareRe, "").trim();
   }
 
   _sanitizeColor(color) {

@@ -107,7 +107,7 @@ HF_CHARACTER_PROFILES = {
         "style_weight": 1.0,
         "few_shot": [
             {"role": "user", "content": "Player「こんにちは！今日は何をしてるの？」"},
-            {"role": "assistant", "content": "こんにちは！広場を歩き回りながら、相場の動きと畑の育ち具合を観察しているところだよ。何か面白いこと見つけた？"},
+            {"role": "assistant", "content": "こんにちは！私は広場を歩き回りながら、相場の動きと畑の育ち具合を観察しているところだよ。何か面白いこと見つけた？"},
         ],
     },
     "bob": {
@@ -123,7 +123,7 @@ HF_CHARACTER_PROFILES = {
         "style_weight": 1.0,
         "few_shot": [
             {"role": "user", "content": "Player「こんにちは！今日は何をしてるの？」"},
-            {"role": "assistant", "content": "静かな風を感じながら、この街の移ろいを眺めていたよ。焦らず畑を育てて、豊かな実りを待つつもりさ。"},
+            {"role": "assistant", "content": "静かな風を感じながら、私はこの街の移ろいを眺めていたよ。焦らず畑を育てて、豊かな実りを待つつもりさ。"},
         ],
     },
     "carol": {
@@ -139,7 +139,7 @@ HF_CHARACTER_PROFILES = {
         "style_weight": 1.0,
         "few_shot": [
             {"role": "user", "content": "Player「こんにちは！今日は何をしてるの？」"},
-            {"role": "assistant", "content": "こんにちは！畑で新鮮な野菜を育てて、とびきり美味しい料理を作ろうと思ってるところだよ！"},
+            {"role": "assistant", "content": "こんにちは！私は畑で新鮮な野菜を育てて、とびきり美味しい料理を作ろうと思ってるところだよ！"},
         ],
     },
 }
@@ -349,7 +349,7 @@ def sanitize_tts_text(raw_text: str) -> str:
     text = text.replace("×", "、").replace("⇔", "と").replace("→", "、")
     text = re.sub(r"（\s*）|\(\s*\)", "", text)
     text = re.sub(r"\s+", " ", text).strip()
-    return text[:140]
+    return text[:220]
 
 
 def infer_tts_style(
@@ -587,14 +587,28 @@ def _clean_dialogue_output(raw_text: str, target_name: str) -> str:
     ).strip()
     if not first:
         return ""
-    # 2文まで自然に保持
-    matches = list(re.finditer(r"[。！？!?♪♡]+", first))
+    # 2文まで自然に保持（1文完結＋2文目が途中切れなら1文目で綺麗に切る。1文目自体が途中切れなら「。」を勝手に足さず空で返す）
+    natural_end_re = re.compile(
+        r"(?:です|ます|ました|でした|ません|たい|ない|ろう|よう|しょう|[おこそとのほもよろごぞどぼぽ]う|"
+        r"くれ|ちょうだい|ありがとう|よろしく|ごめん|おはよう|こんにちは|こんばんは|なの|んだ|んです|んだよ|んだね|"
+        r"だよ|だね|だな|かな|かも|[だたるいうくすつぬぶむぐ][よねなさわぞぜか]|(?:っ|し|い|ん)た|(?:[ぁ-ん]|[\u4E00-\u9FFF])(?:る|い)|だ)$"
+    )
+    cutoff_end_re = re.compile(
+        r"(?:[、,・：:;「『（(\[【]|を|が|に|は|へ|で|と|も|から|まで|より|けど|けれど|ので|のに|って|"
+        r"ながら|たり|つつ|て|んで|っ|し|新鮮な|静かな|お得な|育てていな|売らな|見てみよ|集めよ)$"
+    )
+    matches = list(re.finditer(r"[。！？!?♪♡]+[」』\"”'）)]*", first))
     if len(matches) >= 2:
         first = first[:matches[1].end()].strip()
-    elif len(matches) == 1 and matches[0].end() < len(first) and len(first) > 55:
-        first = first[:matches[0].end()].strip()
-    elif not matches and len(first) > 4:
-        first = first.rstrip("、, ") + "。"
+    elif len(matches) == 1 and matches[0].end() < len(first):
+        tail = first[matches[0].end():].strip()
+        if len(first) > 55 or (tail and (cutoff_end_re.search(tail) or not natural_end_re.search(tail))):
+            first = first[:matches[0].end()].strip()
+    elif not matches:
+        trimmed = first.rstrip("、, ")
+        if len(trimmed) <= 4 or cutoff_end_re.search(trimmed) or not natural_end_re.search(trimmed):
+            return ""
+        first = trimmed + "。"
     return f"@{target_name} {first}".strip() if target_name else first
 
 
@@ -631,7 +645,7 @@ def _generate_with_llama_cpp(
             + non_sys[-8:]
         )
         chat_msgs = normalize_hf_messages(chat_msgs, fold_system=is_gemma)
-        gen_tokens = min(max(64, int(max_new_tokens or 96)), 120)
+        gen_tokens = min(max(80, int(max_new_tokens or 120)), 160)
         stop_seqs = ["\n", "</s>", "<|im_end|>", "<end_of_turn>", "<eos>"]
 
     with _llama_lock:
@@ -716,7 +730,7 @@ def _generate_with_local_transformers(
         with torch.inference_mode():
             generated_ids = model.generate(
                 **inputs,
-                max_new_tokens=min(max(32, int(max_new_tokens or 48)), 64),
+                max_new_tokens=min(max(80, int(max_new_tokens or 120)), 160),
                 do_sample=True,
                 temperature=profile["temperature"],
                 top_p=profile["top_p"],

@@ -1,15 +1,15 @@
 const HF_BROWSER_FEW_SHOT = {
   alice: [
     { role: "user", content: "こんにちは！調子はどう？" },
-    { role: "assistant", content: "こんにちは！街の広場を観察しながら、取引板でいい掘り出し物がないか探しているところだよ！" },
+    { role: "assistant", content: "こんにちは！私は広場の相場を観察しながら、取引板でいい掘り出し物がないか探しているところだよ！" },
   ],
   bob: [
     { role: "user", content: "こんにちは！調子はどう？" },
-    { role: "assistant", content: "風が穏やかだね。静かに資源と建物を整えながら、誰よりも豊かな資産を築くつもりさ。" },
+    { role: "assistant", content: "風が穏やかだね。私は静かに資源と建物を整えながら、豊かな資産を築くつもりさ。" },
   ],
   carol: [
     { role: "user", content: "こんにちは！調子はどう？" },
-    { role: "assistant", content: "こんにちは！畑で新鮮な野菜を育てて、美味しい料理を作ってランキング1位を目指すよ！" },
+    { role: "assistant", content: "こんにちは！私は畑で新鮮な野菜を育てて、美味しい料理を作ってランキング1位を目指すよ！" },
   ],
 };
 
@@ -99,7 +99,7 @@ class HuggingFaceClient {
       return;
     }
     try {
-      this._worker = new Worker("js/hf-browser-worker.js?v=gh15", { type: "module" });
+      this._worker = new Worker("js/hf-browser-worker.js?v=gh16", { type: "module" });
       this._workerLoading = true;
       this._workerError = "";
       this._workerStage = "connecting";
@@ -182,7 +182,7 @@ class HuggingFaceClient {
     }
   }
 
-  _runBrowserWorker(messages, maxNewTokens = 64, temperature = 0.55, options = {}) {
+  _runBrowserWorker(messages, maxNewTokens = 112, temperature = 0.55, options = {}) {
     return new Promise((resolve, reject) => {
       if (!this._worker) this._initBrowserWorker();
       if (!this._worker) {
@@ -266,19 +266,117 @@ class HuggingFaceClient {
     return text.trim();
   }
 
+  // 文末が途中で途切れている（トークン上限切れ・括弧未閉じ・助詞や連用形終わり・不自然な句点止め等）を検出
+  static endsWithCutoff(rawBody) {
+    const s = String(rawBody ?? "").trim();
+    if (!s) return true;
+    // 括弧の開きっぱなし（途中切れの典型的サイン）
+    const openPairs = [["「", "」"], ["『", "』"], ["（", "）"], ["(", ")"]];
+    for (const [op, cl] of openPairs) {
+      const nOpen = s.split(op).length - 1;
+      const nClose = s.split(cl).length - 1;
+      if (nOpen > nClose) return true;
+    }
+    // 読点・コロン・開き括弧・スラッシュ等の途中記号で終わっている
+    if (/[、,・：:;「『（(\[【\/\\]$/.test(s)) return true;
+
+    // 末尾の装飾絵文字・閉じ括弧を除いた本体で判定（「採集したよ✨」等を誤検知しない）
+    const noEmoji = s.replace(/[\u{1F300}-\u{1FAFF}\u2600-\u27BF\uFE0F♪♡♥★☆✨]+$/gu, "").trim();
+    const punctMatch = noEmoji.match(/^([\s\S]*?)([。！？!?〜…]+)[」』"”'）)]*$/);
+    if (punctMatch) {
+      const core = punctMatch[1].trim();
+      const punct = punctMatch[2];
+      // サーバー補完やモデル誤出力で途中切れに「。」が付いたケースを検出（例: 売ろうと思っ。/ ニンジンを。/ 集めて。）
+      // （「こんにちは！」「こんばんは！」「負けないんだから！」等の自然な感嘆・挨拶は誤検知しない）
+      if (!core) return true;
+      if (/(?:っ|を|新鮮な|静かな|お得な|育てていな|売らな|見てみよ|集めよ)$/.test(core)) {
+        return true;
+      }
+      if (punct === "。" && /(?:て|んで|けど|けれど|ので|のに|ながら|たり|つつ|が|に|へ|で|まで|より|(?<!こんにち|こんばん)は)$/.test(core)) {
+        return true;
+      }
+      return false;
+    }
+
+    const core = noEmoji.replace(/[」』"”'）)]+$/, "").trim();
+    if (!core) return true;
+    // 途中切れの典型パターン（助詞・促音・連用形・形容動詞連体形・未然形「〜な」・未完「〜みよ/〜めよ」・抽象名詞止め）
+    if (/(?:を|が|に|(?<!こんにち|こんばん)は|へ|で|と|も|から|まで|より|けど|けれど|ので|のに|って|ながら|たり|つつ|て|んで|っ|し|集め|育て|進め|考え|見つけ|始め|続け|話し|食べ|飲め|売れ|買え|建て|植え)$/.test(core)) {
+      return true;
+    }
+    if (/(?:[\u4E00-\u9FFF\u30A0-\u30FF0-9]の|ための|ことの|ものの)$/.test(core)) return true;
+    if (/(?:ていな|でいな|[あらわがざばま]な|[\u4E00-\u9FFF]な|(?:静か|穏やか|にぎやか|華やか|爽やか|鮮やか|細やか|軽やか|緩やか|柔らか|滑らか|豊か|明らか|確か|僅か|わずか|はるか|密か|ひそか)な|みよ|めよ|べよ|けよ|せよ|ねよ|れよ|げよ|ぜよ|高さ|おいしさ|美味しさ|良さ|強さ|安さ|まか|何か)$/.test(core)) {
+      return true;
+    }
+
+    // 文末記号が無い場合、日本語の自然な終止表現（丁寧体・常体・終助詞・勧誘・挨拶）で終わっているか確認
+    const naturalEndingRe = /(?:です|ます|ました|でした|ません|たい|ない|ろう|よう|しょう|[おこそとのほもよろごぞどぼぽ]う|くれ|ちょうだい|ありがとう|よろしく|ごめん|おはよう|こんにちは|こんばんは|おつかれ|なの|んだ|んです|んだよ|んだね|おっけー|OK|つもりだ|感じだ|最高だ|元気だ|好きだ|だよ|だね|だな|かな|かも|つもりさ|ものさ|わけさ|はずさ|のさ|[だたるいうくすつぬぶむぐ][よねなさわぞぜか]|(?:っ|し|い|ん)た|(?:[ぁ-ん]|[\u4E00-\u9FFF])(?:る|い)|だ)$/;
+    return !naturalEndingRe.test(core);
+  }
+
   static truncateToSentences(text, maxSentences = 2) {
     const str = String(text ?? "").trim();
     if (!str) return "";
     const regex = /[。！？!?]+[」』"”'）)]*/g;
-    let count = 0;
+    const matches = [];
     let match;
     while ((match = regex.exec(str)) !== null) {
-      count++;
-      if (count >= maxSentences) {
+      matches.push(match);
+      if (matches.length >= maxSentences) {
         return str.slice(0, match.index + match[0].length).trim();
       }
     }
+    // 1文完結＋2文目が途中で途切れている場合は、完結している最後の文で綺麗に区切る
+    if (matches.length > 0) {
+      const last = matches[matches.length - 1];
+      const endPos = last.index + last[0].length;
+      const tail = str.slice(endPos).trim();
+      if (tail && HuggingFaceClient.endsWithCutoff(tail)) {
+        return str.slice(0, endPos).trim();
+      }
+    }
     return str;
+  }
+
+  // 自分のことを「彼」「彼女」や自分の名前で三人称呼びしてしまう小型モデル特有の不具合を検出
+  static hasSelfThirdPerson(rawBody, speakerName = null, targetName = null) {
+    const s = String(rawBody ?? "").trim();
+    if (!s) return false;
+
+    const CHAR_ALIASES = {
+      alice: ["Alice", "アリス"],
+      bob: ["Bob", "ボブ"],
+      carol: ["Carol", "キャロル"],
+      player: ["Player", "プレイヤー"],
+    };
+
+    const speakerKey = speakerName ? String(speakerName).toLowerCase() : "";
+    const targetKey = targetName ? String(targetName).toLowerCase() : "";
+
+    // 1) 文頭・節頭で話者自身の名前を主語にして三人称語りしている（「こんにちは！Aliceは〜」「アリスは〜」等）
+    if (speakerKey && CHAR_ALIASES[speakerKey]) {
+      const selfPattern = CHAR_ALIASES[speakerKey].join("|");
+      if (new RegExp(`(?:^|[、。！？!?\\s「『（(])(?:${selfPattern})(?:は|が|も|の|って)`).test(s)) {
+        return true;
+      }
+    }
+
+    // 2) 単数の「彼」「彼女」（文中含む・複合語「彼ら/彼方/彼岸」除外）：
+    //    その出現位置より「前」に話者でも相手でもない第三者名が明示されていなければ誤用と判定
+    const pronounRe = /(?<![元今前])(?:彼|彼女)(?![ら方岸])(?:は|が|も|の|を|に|と|へ|から|より|まで|って|だ|じゃ|自身|なら|こそ|だって|だけ|みたい)/g;
+    let hit;
+    while ((hit = pronounRe.exec(s)) !== null) {
+      const before = s.slice(0, hit.index);
+      const hasPriorThirdParty = Object.entries(CHAR_ALIASES).some(([key, aliases]) => {
+        if (key === speakerKey || key === targetKey) return false;
+        return aliases.some(alias => new RegExp(alias, "i").test(before));
+      });
+      if (!hasPriorThirdParty) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   // 閉じ括弧・句読点・助詞断片など、文の途中から切り出された不自然な書き出しを検出
@@ -333,6 +431,11 @@ class HuggingFaceClient {
     if (/[\uFFFD\u0300-\u036F\u0000-\u0008\u000B\u000C\u000E-\u001F]/.test(text)) return true;
     // アクセント付きラテン文字（é, í, ǎ, ó 等の多言語崩壊トークン）
     if (/[\u00C0-\u024F\u1E00-\u1EFF]/.test(text)) return true;
+
+    // プロンプト見出しやAIメタ表現の漏れを拒否
+    if (/(?:【(?:相手の直前の発言|あなたの状況|自分の状況|返答のルール|いま起きた出来事|現在の状況|あなたの戦法|直近の会話)】|役職:|AIアシスタント|言語モデル|プロンプト)/.test(text)) {
+      return true;
+    }
 
     const body = HuggingFaceClient.stripLeadingMention(text)
       .replace(/[@＠][A-Za-z0-9_]+/g, "")
@@ -399,7 +502,7 @@ class HuggingFaceClient {
     return s;
   }
 
-  static cleanDialogueResponse(rawText, targetName) {
+  static cleanDialogueResponse(rawText, targetName, speakerName = null) {
     let text = HuggingFaceClient.stripReasoningTags(rawText);
     text = text.replace(/```[\s\S]*?```/g, "").trim();
     // PLAN等の構造化メタ行を除去（MESSAGE: は行ごと消さずラベルだけ剥がす）
@@ -431,13 +534,15 @@ class HuggingFaceClient {
     text = HuggingFaceClient._unwrapDialogueBody(text);
     text = HuggingFaceClient.truncateToSentences(text, 2);
     if (!text || HuggingFaceClient.isCorruptedText(text)) return "";
+    if (HuggingFaceClient.endsWithCutoff(text)) return "";
+    if (HuggingFaceClient.hasSelfThirdPerson(text, speakerName, targetName)) return "";
 
     return targetName ? `@${targetName} ${text}`.trim() : text;
   }
 
-  static sanitizeAnnounceMessage(rawMsg, targetName) {
+  static sanitizeAnnounceMessage(rawMsg, targetName, speakerName = null) {
     if (!rawMsg) return null;
-    const cleaned = HuggingFaceClient.cleanDialogueResponse(rawMsg, targetName || null);
+    const cleaned = HuggingFaceClient.cleanDialogueResponse(rawMsg, targetName || null, speakerName);
     return cleaned || null;
   }
 
@@ -471,8 +576,8 @@ class HuggingFaceClient {
     const queueKey = this.mode === "browser-hf" ? "browser-hf" : model;
     return this._withQueue(queueKey, async () => {
       const promptWithHint = targetName
-        ? `${userMessage}\n（${targetName}へのセリフを、かぎ括弧や@メンションは付けずに1〜2文の自然な日本語だけで出力してください）`
-        : `${userMessage}\n（かぎ括弧や@メンションは付けずに、1〜2文の自然な日本語だけで出力してください）`;
+        ? `${userMessage}\n（一人称「私」で、${targetName}へ直接話すセリフだけを1〜2文で最後まで言い切ってください。かぎ括弧・@メンション・自分のことを「彼」「彼女」と呼ぶ表現は禁止）`
+        : `${userMessage}\n（一人称「私」で、1〜2文の自然な日本語セリフだけを最後まで言い切ってください。かぎ括弧・@メンション・自分のことを「彼」「彼女」と呼ぶ表現は禁止）`;
       const buildMessages = (history) => [
         { role: "system", content: character.personality },
         ...history,
@@ -486,7 +591,7 @@ class HuggingFaceClient {
         const browserMsgs = [
           {
             role: "system",
-            content: `${character.personality}\n重要: 自分をAIと呼ばず、必ず自然な日本語のみで1〜2文話してください。英語や中国語や記号の羅列は禁止です。`,
+            content: `${character.personality}\n重要: あなた自身が直接しゃべる一人称のセリフだけを自然な日本語1〜2文で最後まで言い切ってください。一人称は必ず「私」を使い、自分のことを「彼」「彼女」や自分の名前で呼ぶ三人称表現・地の文・英語・中国語は禁止です。`,
           },
           ...fewShot,
           ...character.conversationHistory.slice(-2),
@@ -497,13 +602,31 @@ class HuggingFaceClient {
         if (cloudReply) {
           rawText = cloudReply;
           character.lastUsedModel = "Qwen/Qwen2.5-7B-Instruct";
+          if (!HuggingFaceClient.cleanDialogueResponse(rawText, targetName, character.name)) {
+            const retryMsgs = [
+              ...browserMsgs.slice(0, -1),
+              {
+                role: "user",
+                content: `${promptWithHint}\n※必ず一人称「私」で短い1文を句点（。または！）まで最後まで言い切ってください。`,
+              },
+            ];
+            const retryCloud = await this._callDirectCloudRouter(retryMsgs, GAME_CONFIG.maxTokens).catch(() => null);
+            if (retryCloud) rawText = retryCloud;
+          }
         } else {
-          const res = await this._runBrowserWorker(browserMsgs, 64, 0.55, { doSample: true });
+          const res = await this._runBrowserWorker(browserMsgs, 112, 0.55, { doSample: true });
           rawText = res.content;
           if (res.modelId) character.lastUsedModel = res.modelId;
-          // 崩れた出力が出た場合は決定論的デコード(greedy)で1回再試行
-          if (!HuggingFaceClient.cleanDialogueResponse(rawText, targetName)) {
-            const retry = await this._runBrowserWorker(browserMsgs, 56, 0, { doSample: false });
+          // 途中切れ・三人称「彼」・崩れた出力が出た場合は制約を強めて決定論的デコード(greedy)で1回再試行
+          if (!HuggingFaceClient.cleanDialogueResponse(rawText, targetName, character.name)) {
+            const retryMsgs = [
+              ...browserMsgs.slice(0, -1),
+              {
+                role: "user",
+                content: `${promptWithHint}\n※必ず一人称「私」で短い1文を句点（。または！）まで最後まで言い切ってください。`,
+              },
+            ];
+            const retry = await this._runBrowserWorker(retryMsgs, 96, 0, { doSample: false });
             rawText = retry.content;
             if (retry.modelId) character.lastUsedModel = retry.modelId;
           }
@@ -511,7 +634,7 @@ class HuggingFaceClient {
         this.hfAvailable = true;
         this.lmAvailable = true;
       } else {
-        let response = await this._fetchWithTimeout(
+        const sendLocal = (msgs) => this._fetchWithTimeout(
           this.endpoint,
           {
             method: "POST",
@@ -520,28 +643,16 @@ class HuggingFaceClient {
               model,
               max_tokens: GAME_CONFIG.maxTokens,
               stream: false,
-              messages: buildMessages(character.conversationHistory),
+              messages: msgs,
             }),
           },
           90000
         );
+        let response = await sendLocal(buildMessages(character.conversationHistory));
 
         if (response.status === 400 && character.conversationHistory.length > 4) {
           character.conversationHistory = character.conversationHistory.slice(-4);
-          response = await this._fetchWithTimeout(
-            this.endpoint,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                model,
-                max_tokens: GAME_CONFIG.maxTokens,
-                stream: false,
-                messages: buildMessages(character.conversationHistory),
-              }),
-            },
-            90000
-          );
+          response = await sendLocal(buildMessages(character.conversationHistory));
         }
 
         if (!response.ok) {
@@ -567,11 +678,29 @@ class HuggingFaceClient {
         if (!rawText) {
           rawText = data.choices?.[0]?.message?.reasoning_content?.trim() ?? "";
         }
+        // ローカルサーバー時も途中切れ・三人称「彼」等で弾かれた場合は厳格指示で1回再試行
+        if (rawText && !HuggingFaceClient.cleanDialogueResponse(rawText, targetName, character.name)) {
+          const retryMsgs = [
+            ...buildMessages(character.conversationHistory).slice(0, -1),
+            {
+              role: "user",
+              content: `${promptWithHint}\n※必ず一人称「私」で短い1文を句点（。または！）まで最後まで言い切ってください。`,
+            },
+          ];
+          const retryResp = await sendLocal(retryMsgs).catch(() => null);
+          if (retryResp && retryResp.ok) {
+            const retryData = await retryResp.json().catch(() => null);
+            const retryText = retryData?.choices?.[0]?.message?.content?.trim()
+              || retryData?.choices?.[0]?.message?.reasoning_content?.trim()
+              || "";
+            if (retryText) rawText = retryText;
+          }
+        }
       }
 
       if (!rawText) throw new Error("空のレスポンスが返されました");
 
-      const text = HuggingFaceClient.cleanDialogueResponse(rawText, targetName);
+      const text = HuggingFaceClient.cleanDialogueResponse(rawText, targetName, character.name);
       if (!text || (targetName && text === `@${targetName}`)) {
         throw new Error("有効な返答を生成できませんでした");
       }

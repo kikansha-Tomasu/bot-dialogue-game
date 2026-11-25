@@ -1328,6 +1328,13 @@ class Game {
       return;
     }
 
+    const msgBody = this.chatManager._stripMention(text);
+    if (!msgBody) {
+      input.value = "";
+      this._flashInput(`@${target.name} の後にメッセージを入力してください`);
+      return;
+    }
+
     this.chatManager.addMessage({
       senderId: this.player.id,
       senderName: this.player.name,

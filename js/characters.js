@@ -43,6 +43,8 @@ class Character {
     this._talkingTimer = null;
     this._thinkingTimer = null;
     this._speechSeq = 0;
+    this._hasPendingSpeech = false;
+    this._speechQueue = [];
     this._activeTypingId = null;
     this._speakAnimTime = 0;
     this.speechBubble = null;
@@ -385,7 +387,7 @@ class Character {
       .replace(/^[@＠](?:[A-Za-z0-9_]+|全員|みんな|皆さん|みなさん|アリス|ボブ|キャロル|プレイヤー)(?:(?:さん|くん|君|ちゃん|様)[\s、,:：!！]*|[\s、,:：!！]+)/, "")
       .trim();
     const chars = [...clean];
-    const shortened = chars.length > 56 ? chars.slice(0, 54).join("") + "…" : clean;
+    const shortened = chars.length > 74 ? chars.slice(0, 72).join("") + "…" : clean;
     const dur = Math.max(1.5, Number(durationSec) || GAME_CONFIG.speechBubbleDuration);
     this.speechBubble = {
       text: shortened,
@@ -494,10 +496,51 @@ class Character {
 
     ctx.restore();
 
-    // Speech bubble above sprite
+    // Speech bubble or thinking cloud above sprite
     if (this.speechBubble) {
       this._drawSpeechBubble(ctx, x, y, halfH, canvasW);
+    } else if (this.isTyping) {
+      this._drawThinkingBubble(ctx, x, y, halfH, canvasW);
     }
+  }
+
+  _drawThinkingBubble(ctx, cx, cy, r, canvasW) {
+    const step = Math.floor(Date.now() / 420) % 3;
+    const dots = "・".repeat(step + 1);
+    const label = `💭 ${dots}`;
+
+    ctx.save();
+    ctx.font = "12px 'Segoe UI', 'Meiryo', sans-serif";
+    const textW = ctx.measureText("💭 ・・・").width;
+    const bw = textW + 18;
+    const bh = 24;
+    const margin = 8;
+    const bx = Math.max(margin, Math.min(canvasW - bw - margin, cx - bw / 2));
+    const by = Math.max(margin, cy - r - 12 - bh - 6);
+
+    ctx.fillStyle = "rgba(255, 250, 238, 0.94)";
+    ctx.strokeStyle = this.color;
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.roundRect(bx, by, bw, bh, 11);
+    ctx.fill();
+    ctx.stroke();
+
+    // 思考クラウドの小さな丸（2粒・左右端でも吹き出し内に収まるようクランプ）
+    const tailX = Math.max(bx + 10, Math.min(bx + bw - 10, cx));
+    ctx.beginPath();
+    ctx.arc(tailX, by + bh + 4, 3.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(tailX, by + bh + 10, 1.8, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = "#5C4033";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.fillText(label, bx + 9, by + bh / 2 + 0.5);
+    ctx.restore();
   }
 
   _hexToRgb(hex) {
@@ -516,7 +559,7 @@ class Character {
     ctx.globalAlpha = alpha;
     ctx.font = "12px 'Segoe UI', 'Meiryo', sans-serif";
 
-    const maxLineW = Math.min(240, Math.max(140, canvasW - 40));
+    const maxLineW = Math.min(260, Math.max(150, canvasW - 40));
     const lines = [];
     let current = "";
     for (const ch of text) {
@@ -524,16 +567,17 @@ class Character {
       if (ctx.measureText(test).width > maxLineW && current.length > 0) {
         lines.push(current);
         current = ch;
-        if (lines.length === 1) continue;
       } else {
         current = test;
       }
     }
     if (current) lines.push(current);
-    const finalLines = lines.slice(0, 2);
-    if (lines.length > 2) {
-      const lineChars = [...finalLines[1]];
-      finalLines[1] = lineChars.slice(0, Math.max(1, lineChars.length - 1)).join("") + "…";
+    const maxLines = 3;
+    const finalLines = lines.slice(0, maxLines);
+    if (lines.length > maxLines) {
+      const lastIdx = maxLines - 1;
+      const lineChars = [...finalLines[lastIdx]];
+      finalLines[lastIdx] = lineChars.slice(0, Math.max(1, lineChars.length - 1)).join("") + "…";
     }
 
     const lineH = 16;

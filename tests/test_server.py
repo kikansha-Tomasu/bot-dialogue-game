@@ -250,6 +250,13 @@ class TestServerSecurityAndAPI(unittest.TestCase):
             server._extract_target_mention([{"role": "user", "content": "Bobへのセリフを自然な日本語で出力してください"}]),
             "Bob",
         )
+        # 途中切れ文字列に「。」を勝手に付けて通過させないこと
+        self.assertEqual(server._clean_dialogue_output("次は木材を取引板で売ろうと思っ", "Player"), "")
+        self.assertEqual(server._clean_dialogue_output("これから畑のニンジンを", "Player"), "")
+        self.assertEqual(
+            server._clean_dialogue_output("こんにちは！次は木材を売ろうと思っ", "Player"),
+            "@Player こんにちは！",
+        )
 
 
 if __name__ == "__main__":

@@ -61,7 +61,7 @@ class AIBrain {
         }
       }
 
-      if (this.isProcessing[c.id] || c.gatherTarget || c.chatTarget || c.isTalking) return;
+      if (this.isProcessing[c.id] || c.gatherTarget || c.chatTarget || c.isTalking || c._hasPendingSpeech) return;
       this.chatTimers[c.id] -= dt;
       if (this.chatTimers[c.id] <= 0) {
         this._resetTimer(c.id);
@@ -223,7 +223,7 @@ class AIBrain {
       : `${rankInfo.rank}位(1位${rankInfo.leaderName}と差-${rankInfo.gapFromLeader.toFixed(0)}🪙)`;
 
     return (
-      `役職:${char.name}(${s?.styleLabel || "バランス型"}) | 作戦:${s?.goal || ""} [重視:${s?.focusAction || "gather"} / 目標:${s?.targetItem || "wood"}]\n` +
+      `あなた(${char.name}・${s?.styleLabel || "バランス型"}) | 作戦:${s?.goal || ""} [重視:${s?.focusAction || "gather"} / 目標:${s?.targetItem || "wood"}]\n` +
       `順位:${gapStr}(総資産${rankInfo.total.toFixed(0)}🪙) | 所持:${invSummary}\n` +
       `建物:${myBuildings}/2(建築可:${affordableBuilds.join("・") || "なし"}) | 農地:${myPlots}/2(収穫可:${ripePlots}) | 料理可:${cookable.join("・") || "なし"}\n` +
       `取引板:${openOrders || "注文なし"} | 相場:${prices || "未成立"}`
@@ -587,13 +587,13 @@ class AIBrain {
 
       let responder = null;
       if (recipient && !recipient.isPlayer) {
-        if (!this.isProcessing[recipient.id] && !recipient.isTalking) {
+        if (!this.isProcessing[recipient.id] && !recipient.isTalking && !recipient._hasPendingSpeech) {
           responder = recipient;
         }
       } else {
         // 全員向け発言（出品・収穫等）には手が空いているAIのうち近い／関心のある1人が反応
         const idleAIs = this.aiChars
-          .filter(c => c.id !== speaker.id && !this.isProcessing[c.id] && !c.isTalking)
+          .filter(c => c.id !== speaker.id && !this.isProcessing[c.id] && !c.isTalking && !c._hasPendingSpeech)
           .sort((a, b) =>
             Math.hypot(a.x - speaker.x, a.y - speaker.y) -
             Math.hypot(b.x - speaker.x, b.y - speaker.y)
@@ -604,13 +604,14 @@ class AIBrain {
       if (!responder) return;
       this._lastAutoReplyAt = now;
       setTimeout(() => {
-        if (this.isProcessing[responder.id] || responder.isTalking) return;
+        if (this.isProcessing[responder.id] || responder.isTalking || responder._hasPendingSpeech) return;
         this._triggerReply(responder, speaker, messageText, 1);
       }, GAME_CONFIG.aiReplyDelay);
     };
   }
 
   // 採集・農業・料理・取引・建築・街発展などのリアクションを定型文ではなくLLMに考えさせる
+  // ※文章・音声の生成中はキャラクターを止めず動き続けさせ、準備完了後に3秒「考え中」ポーズを取る
   async _speakActionViaLLM(char, target, actionFact, fallbackText, preGeneratedMsg = null, options = {}) {
     if (!char) return;
     const isBroadcast = !target;
@@ -618,14 +619,14 @@ class AIBrain {
     const recipientName = isBroadcast ? "全員" : target.name;
     const mentionName = isBroadcast ? null : target.name;
 
-    const sanitizedPre = LMStudioClient.sanitizeAnnounceMessage(preGeneratedMsg, mentionName);
+    const sanitizedPre = LMStudioClient.sanitizeAnnounceMessage(preGeneratedMsg, mentionName, char.name);
     if (sanitizedPre) {
       const triggerAfter = this._buildActionReplyTrigger(char, target, sanitizedPre, options);
       this._presentResponse(char, sanitizedPre, recipientId, recipientName, triggerAfter);
       return;
     }
 
-    const cleanFallback = LMStudioClient.sanitizeAnnounceMessage(fallbackText, mentionName) || fallbackText;
+    const cleanFallback = LMStudioClient.sanitizeAnnounceMessage(fallbackText, mentionName, char.name) || fallbackText;
     if (!this._canUseLLMForSpeech() || this.isProcessing[char.id]) {
       const triggerAfter = this._buildActionReplyTrigger(char, target, cleanFallback, options);
       this._presentResponse(char, cleanFallback, recipientId, recipientName, triggerAfter);
@@ -633,12 +634,6 @@ class AIBrain {
     }
 
     this.isProcessing[char.id] = true;
-    char.isTalking = true;
-    char.isTyping = true;
-    char.talkingTo = target || null;
-    if (target && typeof char.faceToward === "function") char.faceToward(target);
-    const thinkingTypingId = this.chatManager.addTypingIndicator(char.name, char.color, recipientName);
-    char._activeTypingId = thinkingTypingId;
 
     try {
       const invSummary = getInventorySummary(char.inventory, 5) || "なし";
@@ -648,8 +643,8 @@ class AIBrain {
         ? `【あなたの戦法・作戦（内部方針なのでそのまま暴露せず会話に活かす）】${s.styleLabel}：${s.goal}\n`
         : "";
       const audienceLine = isBroadcast
-        ? `この出来事について、周囲のみんなに聞こえるように${char.name}らしい自然な日本語で1〜2文だけ感想や呼びかけを言ってください。特定の相手への@メンションは不要です。`
-        : `この出来事について、近くにいた${target.name}に向かって${char.name}らしい自然な日本語で1〜2文だけ話しかけてください。`;
+        ? `この出来事について、あなた自身（一人称「私」）の言葉として周囲のみんなに聞こえるように自然な日本語1〜2文で最後まで言い切ってください。特定の相手への@メンションは不要です。`
+        : `この出来事について、あなた自身（一人称「私」）の言葉として近くにいた${target.name}に向かって自然な日本語1〜2文で最後まで言い切ってください。`;
       const prompt =
         `【いま起きた出来事】${actionFact}\n` +
         `【現在の状況】持ち物: ${invSummary} ／ 総資産ランキング${rankInfo.rank}位（${rankInfo.total.toFixed(1)}🪙）\n` +
@@ -1246,7 +1241,7 @@ class AIBrain {
     const inv = getInventorySummary(char.inventory, 4) || "まだ空っぽ";
     const orderCount = this.orderBook?.orders.length || 0;
     const rankInfo = this._getCharRank(char);
-    const rankStr = `いまランキング${rankInfo.rank}位（${rankInfo.total.toFixed(0)}🪙）`;
+    const rankStr = `ランキング${rankInfo.rank}位（${rankInfo.total.toFixed(0)}🪙）`;
     const isReply = Boolean(String(incomingText || "").trim());
     const hasTradeWord = /売|買|取引|コイン|交換|価格|板|発展|街|農|畑|ライバル|勝|負/.test(incomingText);
 
@@ -1258,7 +1253,7 @@ class AIBrain {
           ]
         : isReply
           ? [
-              `なるほど、面白い話だね！私は${rankStr}だから、これから相場で一気に追い上げるつもりだよ。`,
+              `なるほど、面白い話だね！私はいま${rankStr}だから、これから相場で一気に追い上げるつもりだよ。`,
               `そうなんだ！私もいま広場の様子を観察して次の一手を考えているところだよ。`,
             ]
           : [
@@ -1272,7 +1267,7 @@ class AIBrain {
           ]
         : isReply
           ? [
-              `なるほど、興味深い視点だね。私は${rankStr}、焦らず資源と建物を整えていくよ。`,
+              `なるほど、興味深い視点だね。私はいま${rankStr}、焦らず資源と建物を整えていくよ。`,
               `そうか…穏やかな広場にも熱い競争があるね。私は手堅く資産を育ててみせよう。`,
             ]
           : [
@@ -1286,7 +1281,7 @@ class AIBrain {
           ]
         : isReply
           ? [
-              `わあ、そうなんだね！私は${rankStr}だけど、畑の作物と料理で逆転してみせるよ！`,
+              `わあ、そうなんだね！私はいま${rankStr}だけど、畑の作物と料理で逆転してみせるよ！`,
               `へぇ〜、楽しそうだね！私も負けずにとびきりの料理を作ってトップを狙うからね！`,
             ]
           : [
@@ -1322,10 +1317,19 @@ class AIBrain {
   }
 
   // 音声同期プレゼンテーション:
-  // 1. 準備中: 移動停止・相手方向を向く・思考パルス表示（チャット本文はまだ表示しない）
-  // 2. 音声準備完了＆再生開始(onStart): チャット表示・吹き出し表示・発話モーション開始
-  // 3. 再生終了(onEnd): 発話モーション終了・移動再開・後続会話トリガー
+  // 1. 準備中（文章生成・音声合成中）: キャラは動き続ける（isTalking=false / isTyping=false）
+  // 2. 準備完了 (onReady): 立ち止まって相手方向を向き、3秒間「考え中」表示（💭思考バブル＋チャット入力中表示）
+  // 3. 再生開始 (onStart): チャット表示・吹き出し表示・発話モーション開始
+  // 4. 再生終了 (onEnd): 発話モーション終了・移動再開・後続会話トリガー（同一キャラの連続発話はキューで直列化し欠落・音声ズレを防ぐ）
   _presentResponse(char, response, recipientId, recipientName, triggerAfter) {
+    if (char._hasPendingSpeech) {
+      const q = char._speechQueue || (char._speechQueue = []);
+      if (q.length < 2) {
+        q.push({ response, recipientId, recipientName, triggerAfter });
+      }
+      return;
+    }
+
     const seq = (char._speechSeq || 0) + 1;
     char._speechSeq = seq;
 
@@ -1343,27 +1347,39 @@ class AIBrain {
     }
 
     const recipient = this.characters.find(c => c.id === recipientId) || null;
-    char.isTalking = true;
-    char.isTyping = true;
-    char.isSpeaking = false;
-    char.talkingTo = recipient;
-    if (recipient && typeof char.faceToward === "function") {
-      char.faceToward(recipient);
-    }
+    const thinkMs = GAME_CONFIG.thinkingDisplayDuration ?? 3000;
+    char._hasPendingSpeech = true;
 
-    const typingId = this.chatManager.addTypingIndicator(char.name, char.color, recipientName);
-    char._activeTypingId = typingId;
-
+    let thinkingStarted = false;
+    let typingId = null;
     let revealed = false;
     let finished = false;
+
+    const beginThinking = () => {
+      if (thinkingStarted || revealed || finished || char._speechSeq !== seq) return;
+      thinkingStarted = true;
+      char.speechBubble = null; // 前の吹き出しが残っていても💭考え中バブルを隠さない
+      char.isTalking = true;
+      char.isTyping = true;
+      char.isSpeaking = false;
+      char.talkingTo = recipient;
+      if (recipient && typeof char.faceToward === "function") {
+        char.faceToward(recipient);
+      }
+      typingId = this.chatManager.addTypingIndicator(char.name, char.color, recipientName);
+      char._activeTypingId = typingId;
+    };
 
     const revealChat = (durationSec = 0) => {
       if (revealed) return;
       revealed = true;
-      if (char._activeTypingId === typingId) {
-        char._activeTypingId = null;
+      if (typingId) {
+        if (char._activeTypingId === typingId) {
+          char._activeTypingId = null;
+        }
+        this.chatManager.removeTypingIndicator(typingId);
+        typingId = null;
       }
-      this.chatManager.removeTypingIndicator(typingId);
 
       this.chatManager.addMessage({
         senderId: char.id,
@@ -1376,8 +1392,10 @@ class AIBrain {
       });
 
       if (char._speechSeq === seq) {
+        char.isTalking = true;
         char.isTyping = false;
         char.isSpeaking = true;
+        char.talkingTo = recipient;
         if (recipient && typeof char.faceToward === "function") {
           char.faceToward(recipient);
         }
@@ -1388,15 +1406,23 @@ class AIBrain {
       }
     };
 
-    const finishSpeaking = () => {
+    const finishSpeaking = (mode = "") => {
       if (finished) return;
       finished = true;
+      const wasRevealedBeforeEnd = revealed;
       if (!revealed) revealChat(0);
       if (char._speechSeq !== seq) return;
 
+      if (typingId) {
+        if (char._activeTypingId === typingId) char._activeTypingId = null;
+        this.chatManager.removeTypingIndicator(typingId);
+        typingId = null;
+      }
       char.isTyping = false;
       char.isSpeaking = false;
-      if (char.speechBubble) {
+      // 実際に音声再生・表示完了した場合のみ残時間を0.9秒へ短縮（ミュート直後の新規表示は読めるよう維持）
+      const keepReadable = !wasRevealedBeforeEnd || mode === "cancelled" || mode === "muted" || mode === "empty" || mode === "dropped";
+      if (char.speechBubble && !keepReadable) {
         char.speechBubble.ttl = Math.min(char.speechBubble.ttl, 0.9);
       }
 
@@ -1405,31 +1431,46 @@ class AIBrain {
         if (char._speechSeq !== seq) return;
         char.isTalking = false;
         char.talkingTo = null;
+        char._hasPendingSpeech = false;
         char._talkingTimer = null;
+        const nextSpeech = char._speechQueue?.length ? char._speechQueue.shift() : null;
         if (triggerAfter) triggerAfter();
+        if (nextSpeech) {
+          this._presentResponse(
+            char,
+            nextSpeech.response,
+            nextSpeech.recipientId,
+            nextSpeech.recipientName,
+            nextSpeech.triggerAfter
+          );
+        }
       }, 350);
     };
 
     const tts = this._getTTS();
     if (tts && tts.enabled && typeof tts.speak === "function") {
+      // 音声合成・準備中はキャラを止めず動き続けさせ、準備完了(onReady)後に3秒考えてから再生開始
       tts.speak(response, char.name, {
+        thinkDelayMs: thinkMs,
+        onReady: () => beginThinking(),
         onStart: ({ durationSec } = {}) => revealChat(durationSec || 0),
-        onEnd: () => finishSpeaking(),
+        onEnd: ({ mode } = {}) => finishSpeaking(mode || ""),
       });
     } else {
-      // 音声OFF時は短い演出テンポでチャット表示→会話時間経過後に移動再開
+      // 音声OFF時は文章が出来た直後から3秒「考え中」ポーズ→チャット表示→移動再開
+      beginThinking();
       char._thinkingTimer = setTimeout(() => {
         char._thinkingTimer = null;
         if (char._speechSeq !== seq) {
-          this.chatManager.removeTypingIndicator(typingId);
+          if (typingId) this.chatManager.removeTypingIndicator(typingId);
           return;
         }
         const holdSec = Math.min(GAME_CONFIG.speechBubbleDuration, Math.max(2.2, response.length * 0.08));
         revealChat(holdSec);
         char._talkingTimer = setTimeout(() => {
-          finishSpeaking();
+          finishSpeaking("text-only");
         }, Math.round(holdSec * 1000));
-      }, GAME_CONFIG.thinkingDisplayDuration);
+      }, thinkMs);
     }
   }
 
@@ -1443,18 +1484,12 @@ class AIBrain {
       return;
     }
 
-    // 会話生成中から立ち止まって相手の方を向く
-    initiator.isTalking = true;
-    initiator.isTyping = true;
-    initiator.talkingTo = target;
-    if (typeof initiator.faceToward === "function") initiator.faceToward(target);
-
     const pendingMsg = initiator._pendingChatMessage ?? null;
     initiator._pendingChatMessage = null;
 
     try {
       let response;
-      const sanitizedPending = LMStudioClient.sanitizeAnnounceMessage(pendingMsg, target.name);
+      const sanitizedPending = LMStudioClient.sanitizeAnnounceMessage(pendingMsg, target.name, initiator.name);
       if (sanitizedPending) {
         response = sanitizedPending;
         const historyBody = LMStudioClient.stripLeadingMention(response, target.name);
@@ -1473,17 +1508,17 @@ class AIBrain {
 
         const isCompact = this.apiClient?.mode === "browser-hf";
         const prompt = isCompact
-          ? `あなたは${initiator.name}です。${target.name}へ直接話しかけてください。\n` +
+          ? `あなたは${initiator.name}です。一人称「私」で${target.name}へ直接話しかけてください。\n` +
             `【自分の状況】${this._buildCompactStrategicContext(initiator)}\n` +
             `【直近の会話】${recentStr}\n` +
-            `取引の提案・交渉・ライバルへの牽制など、${target.name}が返事したくなる具体的な1〜2文を自然な日本語で話しかけてください。`
-          : `あなたは${initiator.name}です。${target.name}に向かって話しかけてください。\n\n` +
+            `取引の提案・交渉・ライバルへの牽制など、${target.name}が返事したくなる具体的な1〜2文を自然な日本語で最後まで言い切ってください。`
+          : `あなたは${initiator.name}です。一人称「私」で${target.name}に向かって話しかけてください。\n\n` +
             `最近の会話の流れ: ${recentStr}\n\n${this._buildChatEconomicContext(initiator)}\n\n` +
             `【チャットの目的】\n` +
             `あなたの総資産を増やすために、相手に取引を持ちかけたり交渉したりしてください。\n` +
             `- 自分の資源・作物・料理を売りたい場合、具体的な価格や数量を提示して勧誘してください\n` +
             `- 相手の所持品が欲しければ買取りや提案をしてください\n` +
-            `- 内部戦略は明かさず、キャラクターの個性で自然に1〜2文で話しかけてください。`;
+            `- 内部戦略は明かさず、一人称「私」で自然に1〜2文で最後まで言い切ってください。`;
 
         response = await this.apiClient.callAI(initiator, prompt, target.name, `(${target.name}に話しかける)`);
         if (!this.llmAvailable) {
@@ -1514,10 +1549,6 @@ class AIBrain {
     if (this.isProcessing[responder.id]) return;
     this.isProcessing[responder.id] = true;
     const prevSeq = responder._speechSeq || 0;
-    responder.isTalking = true;
-    responder.isTyping = true;
-    responder.talkingTo = originalSender;
-    if (typeof responder.faceToward === "function") responder.faceToward(originalSender);
 
     try {
       const strippedText = LMStudioClient.stripLeadingMention(originalText);
@@ -1525,13 +1556,13 @@ class AIBrain {
       const prompt = isCompact
         ? `【相手の直前の発言】${originalSender.name}があなた（${responder.name}）に言いました：「${strippedText}」\n` +
           `【あなたの状況】${this._buildCompactStrategicContext(responder)}\n` +
-          `【返答のルール】${originalSender.name}が言った内容にきちんと反応し、賛成・断り・質問・逆提案などを${responder.name}らしい自然な日本語1〜2文で返答してください。`
+          `【返答のルール】${originalSender.name}が言った内容にきちんと反応し、一人称「私」で賛成・断り・質問・逆提案などを自然な日本語1〜2文で最後まで言い切ってください。`
         : `${originalSender.name}があなた（${responder.name}）に話しかけました：「${strippedText}」。\n\n` +
           `${this._buildChatEconomicContext(responder)}\n\n` +
           `【返答の指針】\n` +
           `- 相手の発言内容（「${strippedText}」）にきちんと噛み合う返答をしてください\n` +
           `- 取引提案なら有利かどうか判断して受け入れ・断り・カウンターオファーを返してください\n` +
-          `- 自分の内部戦略は明かさず、キャラクターの個性で1〜2文の自然な日本語で返答してください。`;
+          `- 自分の内部戦略は明かさず、一人称「私」で1〜2文の自然な日本語で最後まで言い切ってください。`;
       const response = await this.apiClient.callAI(
         responder,
         prompt,
@@ -1548,7 +1579,7 @@ class AIBrain {
         if (now - this._lastAutoReplyAt < 4000) return;
         this._lastAutoReplyAt = now;
         setTimeout(() => {
-          if (this.isProcessing[originalSender.id] || originalSender.isTalking) return;
+          if (this.isProcessing[originalSender.id] || originalSender.isTalking || originalSender._hasPendingSpeech) return;
           this._triggerReply(originalSender, responder, response, depth + 1);
         }, GAME_CONFIG.aiReplyDelay);
       } : null;
@@ -1558,19 +1589,10 @@ class AIBrain {
       console.warn(`[AIBrain] ${responder.name} reply fallback:`, err.message);
       // 他の割り込み発話（取引リアクション等）で _speechSeq が進んでいれば、その発話状態を壊さない
       if ((responder._speechSeq || 0) === prevSeq) {
-        if (responder._activeTypingId) {
-          this.chatManager.removeTypingIndicator(responder._activeTypingId);
-          responder._activeTypingId = null;
-        }
         if (!this._canUseLLMForSpeech() && depth === 1) {
           const strippedText = LMStudioClient.stripLeadingMention(originalText);
           const fallback = this._generateOfflineReply(responder, originalSender.name, strippedText);
           this._presentResponse(responder, fallback, originalSender.id, originalSender.name, null);
-        } else {
-          responder.isTalking = false;
-          responder.isTyping = false;
-          responder.isSpeaking = false;
-          responder.talkingTo = null;
         }
       }
     } finally {
@@ -1589,24 +1611,20 @@ class AIBrain {
       return;
     }
     this.isProcessing[targetChar.id] = true;
-    targetChar.isTalking = true;
-    targetChar.isTyping = true;
-    targetChar.talkingTo = player;
-    if (typeof targetChar.faceToward === "function") targetChar.faceToward(player);
 
     try {
-      const strippedMessage = playerMessage.replace(/^[@＠]\w+[\s、,:：]*/, "").trim();
+      const strippedMessage = LMStudioClient.stripLeadingMention(playerMessage);
       const isCompact = this.apiClient?.mode === "browser-hf";
       const prompt = isCompact
         ? `【相手の直前の発言】${player.name}があなた（${targetChar.name}）に言いました：「${strippedMessage}」\n` +
           `【あなたの状況】${this._buildCompactStrategicContext(targetChar)}\n` +
-          `【返答のルール】${player.name}の発言内容にきちんと反応して、${targetChar.name}らしい自然な日本語1〜2文で返答してください。`
+          `【返答のルール】${player.name}の発言内容にきちんと反応して、一人称「私」で自然な日本語1〜2文で最後まで言い切ってください。`
         : `${player.name}があなた（${targetChar.name}）に話しかけました：「${strippedMessage}」。\n\n` +
           `${this._buildChatEconomicContext(targetChar)}\n\n` +
           `【返答の指針】\n` +
           `- 相手の発言（「${strippedMessage}」）にきちんと噛み合う返答をしてください\n` +
           `- 取引提案なら有利かどうか判断して受け入れ・断り・カウンターオファーを返してください\n` +
-          `- 自分の内部戦略は明かさず、キャラクターの個性で1〜2文の自然な日本語で返答してください。`;
+          `- 自分の内部戦略は明かさず、一人称「私」で1〜2文の自然な日本語で最後まで言い切ってください。`;
       const response = await this.apiClient.callAI(
         targetChar,
         prompt,
@@ -1626,6 +1644,7 @@ class AIBrain {
             c.id !== targetChar.id &&
             !this.isProcessing[c.id] &&
             !c.isTalking &&
+            !c._hasPendingSpeech &&
             Math.hypot(c.x - targetChar.x, c.y - targetChar.y) <= 220
           )
           .sort((a, b) =>
@@ -1636,7 +1655,7 @@ class AIBrain {
           this._lastAutoReplyAt = now;
           const bystander = bystanders[0];
           setTimeout(() => {
-            if (this.isProcessing[bystander.id] || bystander.isTalking) return;
+            if (this.isProcessing[bystander.id] || bystander.isTalking || bystander._hasPendingSpeech) return;
             this._triggerReply(bystander, targetChar, response, 1);
           }, GAME_CONFIG.aiReplyDelay + 1500);
         }
@@ -1649,7 +1668,7 @@ class AIBrain {
         this.llmAvailable = false;
         if (this.onStateChange) this.onStateChange();
       }
-      const stripped = playerMessage.replace(/^[@＠]\w+[\s、,:：]*/, "").trim();
+      const stripped = LMStudioClient.stripLeadingMention(playerMessage);
       const fallback = this._generateOfflineReply(targetChar, player.name, stripped);
       this._presentResponse(targetChar, fallback, player.id, player.name, null);
     } finally {

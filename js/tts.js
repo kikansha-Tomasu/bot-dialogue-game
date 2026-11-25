@@ -132,7 +132,7 @@ class TTSManager {
       return;
     }
     try {
-      this._ttsWorker = new Worker("js/hf-tts-worker.js?v=gh15", { type: "module" });
+      this._ttsWorker = new Worker("js/hf-tts-worker.js?v=gh16", { type: "module" });
       this.browserTtsLoading = true;
       this.browserTtsError = "";
       this._ttsWorker.onmessage = (event) => {
@@ -432,6 +432,15 @@ class TTSManager {
   _finalizeItem(item, mode = "cancelled") {
     if (!item) return;
     item.cancelled = true;
+    if (item._thinkTimer) {
+      this._clearTimer(item._thinkTimer);
+      item._thinkTimer = null;
+    }
+    if (item._thinkResolve) {
+      const resolveThink = item._thinkResolve;
+      item._thinkResolve = null;
+      try { resolveThink(); } catch (_) {}
+    }
     if (!item.started) {
       item.started = true;
       try { item.onStart?.({ durationSec: 0, mode }); } catch (_) {}
@@ -510,17 +519,23 @@ class TTSManager {
   }
 
   /**
-   * 音声を事前に準備（合成・ロード）し、再生開始と同時に onStart、再生終了時に onEnd を発火する。
-   * これによりチャット表示・吹き出し・キャラクターの動きを音声再生と完全に同期できる。
+   * 音声を事前に準備（合成・ロード）し、準備完了時に onReady（＋任意の思考待機 thinkDelayMs）、
+   * 再生開始と同時に onStart、再生終了時に onEnd を発火する。
+   * これにより「準備中は動き続け、文章・音声ができたら3秒考えてから話す」動きを音声再生と完全に同期できる。
    */
   speak(text, characterName, callbacks = {}) {
+    const onReady = typeof callbacks === "object" ? callbacks?.onReady : undefined;
     const onStart = typeof callbacks === "function" ? callbacks : callbacks?.onStart;
     const onEnd = typeof callbacks === "object" ? callbacks?.onEnd : undefined;
+    const thinkDelayMs = typeof callbacks === "object" && typeof callbacks?.thinkDelayMs === "number"
+      ? Math.max(0, callbacks.thinkDelayMs)
+      : 0;
     const clean = TTSManager.sanitizeForSpeech(text);
 
     if (!this.enabled || !clean || typeof window === "undefined") {
-      try { onStart?.({ durationSec: 0, mode: "muted" }); } catch (_) {}
-      try { onEnd?.({ mode: "muted" }); } catch (_) {}
+      const mode = !clean ? "empty" : "muted";
+      try { onStart?.({ durationSec: 0, mode }); } catch (_) {}
+      try { onEnd?.({ mode }); } catch (_) {}
       return;
     }
 
@@ -533,12 +548,17 @@ class TTSManager {
       text,
       clean,
       characterName,
+      onReady,
       onStart,
       onEnd,
+      thinkDelayMs,
+      readyFired: false,
       started: false,
       ended: false,
       cancelled: false,
       _blobUrl: null,
+      _thinkTimer: null,
+      _thinkResolve: null,
       preparePromise: null,
     };
     // キュー待機中でも先に音声データを合成・準備しておく（再生のテンポを上げる）
@@ -659,10 +679,11 @@ class TTSManager {
     const item = this._queue.shift();
     this._activeItem = item;
     this._playItem(item).finally(() => {
+      // stop() 後に新しい item が再生開始されていた場合は _processNext() を二重起動しない
       if (this._activeItem === item) {
         this._activeItem = null;
+        this._processNext();
       }
-      this._processNext();
     });
   }
 
@@ -688,6 +709,31 @@ class TTSManager {
     if (item.cancelled || !this.enabled || prepared?.kind === "cancelled") {
       this._finalizeItem(item, "cancelled");
       return;
+    }
+
+    // 文章・音声の準備が完了したタイミングで onReady を通知し、指定時間（3秒）だけ「考え中」ポーズを取る
+    if (!item.readyFired) {
+      item.readyFired = true;
+      try {
+        item.onReady?.({
+          durationSec: prepared.durationSec || 0,
+          thinkDelayMs: item.thinkDelayMs || 0,
+        });
+      } catch (_) {}
+    }
+    if (item.thinkDelayMs > 0) {
+      await new Promise((resolve) => {
+        item._thinkResolve = resolve;
+        item._thinkTimer = this._setTimer(() => {
+          item._thinkTimer = null;
+          item._thinkResolve = null;
+          resolve();
+        }, item.thinkDelayMs);
+      });
+      if (item.cancelled || !this.enabled) {
+        this._finalizeItem(item, "cancelled");
+        return;
+      }
     }
 
     const fireStart = (mode, durationSec) => {
@@ -755,6 +801,10 @@ class TTSManager {
       if (prepared.wavBuffer) {
         const blob = new Blob([prepared.wavBuffer], { type: "audio/wav" });
         prepared = await this._createAudioFromBlob(blob, item, prepared.durationSec, prepared.playbackRate);
+        if (item.cancelled || !this.enabled || prepared?.kind === "cancelled") {
+          this._finalizeItem(item, "cancelled");
+          return;
+        }
       }
     }
 
@@ -816,7 +866,12 @@ class TTSManager {
 
   _playSpeechFallback(item, text, cfg, durationSec, fireStart, fireEnd) {
     return new Promise((resolve) => {
-      if (!this.enabled || item.cancelled || typeof window === "undefined" || !window.speechSynthesis) {
+      if (!this.enabled || item.cancelled) {
+        this._finalizeItem(item, "cancelled");
+        resolve();
+        return;
+      }
+      if (typeof window === "undefined" || !window.speechSynthesis) {
         const waitMs = Math.max(1600, Math.min(4000, Math.round(durationSec * 800)));
         fireStart("no-speech", waitMs / 1000);
         this._setTimer(() => {

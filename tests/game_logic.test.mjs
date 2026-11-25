@@ -882,7 +882,7 @@ test("Serverless GitHub Pages mode: HuggingFaceClient switches to browser-hf and
   assert.match(indexHtml, /音声合成：ZEN-TTS[\s\S]*https:\/\/zenryokukikai\.com/);
 });
 
-test("Audio-synchronized chat & movement: delays chat until audio starts, holds movement/bubble during speech, resumes on end", async () => {
+test("Audio-synchronized chat & movement: keeps moving while preparing, pauses 3s to think when ready, speaks, and resumes on end", async () => {
   const chars = buildCharacters(800, 600);
   const alice = chars.find(c => c.id === "alice");
   const player = chars.find(c => c.id === "player");
@@ -910,8 +910,26 @@ test("Audio-synchronized chat & movement: delays chat until audio starts, holds 
     afterFired = true;
   });
 
-  // 1. 音声準備中：チャットはまだ表示されず、キャラは停止して相手方向（右）を向く
+  // 1. 音声準備中：チャットはまだ表示されず、キャラは止まらず動き続ける（isTalking=false / isTyping=false）
   assert.ok(capturedCallbacks);
+  assert.equal(capturedCallbacks.callbacks.thinkDelayMs, 3000);
+  assert.equal(cm.messages.length, 0);
+  assert.equal(alice.isTalking, false);
+  assert.equal(alice.isTyping, false);
+  assert.equal(alice.isSpeaking, false);
+  assert.equal(alice._hasPendingSpeech, true);
+  assert.equal(alice.speechBubble, null);
+
+  alice.wanderTarget = { x: 600, y: 200 };
+  alice.wanderTimer = 10;
+  alice.updateWander(0.2, 800, 600, null);
+  assert.ok(alice.x > 200, "音声準備中はキャラが停止せず動き続けること");
+  const movedX = alice.x;
+
+  // 2. 音声準備完了 (onReady)：ここで初めて立ち止まって相手方向（右）を向き、3秒間の考え中状態に入る
+  player.x = movedX + 140;
+  player.y = alice.y;
+  capturedCallbacks.callbacks.onReady({ durationSec: 3.5, thinkDelayMs: 3000 });
   assert.equal(cm.messages.length, 0);
   assert.equal(alice.isTalking, true);
   assert.equal(alice.isTyping, true);
@@ -919,13 +937,11 @@ test("Audio-synchronized chat & movement: delays chat until audio starts, holds 
   assert.equal(alice._facing, "right");
   assert.equal(alice.speechBubble, null);
 
-  alice.wanderTarget = { x: 600, y: 400 };
-  alice.wanderTimer = 10;
+  // 考え中（3秒間）は移動停止したまま待つ
   alice.updateWander(0.2, 800, 600, null);
-  assert.equal(alice.x, 200);
-  assert.equal(alice.y, 200);
+  assert.equal(alice.x, movedX);
 
-  // 2. 音声準備完了＆再生開始 (onStart)：チャットと吹き出しが表示され、発話モーション開始
+  // 3. 3秒思考後・再生開始 (onStart)：チャットと吹き出しが表示され、発話モーション開始
   capturedCallbacks.callbacks.onStart({ durationSec: 3.5, mode: "hf-audio" });
   assert.equal(cm.messages.length, 1);
   assert.equal(cm.messages[0].text, "@Player 音声と同期して話すよ！");
@@ -936,23 +952,24 @@ test("Audio-synchronized chat & movement: delays chat until audio starts, holds 
   // 音声再生中は長時間経過しても吹き出しが消えず、移動も停止したまま発話モーションが進む
   alice.updateWander(0.25, 800, 600, null);
   assert.ok(alice._speakAnimTime > 0);
-  assert.equal(alice.x, 200);
+  assert.equal(alice.x, movedX);
   alice.updateSpeechBubble(10.0);
   assert.ok(alice.speechBubble && alice.speechBubble.ttl >= 0.9);
 
-  // 3. 音声再生終了 (onEnd)：発話モーション終了・吹き出し残時間短縮→移動再開＆後続トリガー発火
+  // 4. 音声再生終了 (onEnd)：発話モーション終了・吹き出し残時間短縮→移動再開＆後続トリガー発火
   capturedCallbacks.callbacks.onEnd({ mode: "hf-audio" });
   assert.equal(alice.isSpeaking, false);
   assert.ok(alice.speechBubble.ttl <= 0.9);
 
   await new Promise(r => setTimeout(r, 420));
   assert.equal(alice.isTalking, false);
+  assert.equal(alice._hasPendingSpeech, false);
   assert.equal(alice.talkingTo, null);
   assert.equal(afterFired, true);
 
   // 移動再開の確認
   alice.updateWander(0.2, 800, 600, null);
-  assert.ok(alice.x > 200);
+  assert.ok(alice.x > movedX);
 });
 
 test("LLM Output Quality & Action Speech: rejects garbled WebGPU tokens, removes q4f16, and generates gather/farm/trade speech via LLM", async () => {
@@ -1209,8 +1226,8 @@ test("Chat Quality: prevents mid-sentence fragment starts, removes odd offline l
   const bubbleChar = buildCharacters(800, 600)[0];
   bubbleChar.setSpeechBubble("@Alice、こんにちは！");
   assert.equal(bubbleChar.speechBubble.text, "こんにちは！");
-  bubbleChar.setSpeechBubble("🪵".repeat(60));
-  assert.equal(bubbleChar.speechBubble.text, "🪵".repeat(54) + "…", "サロゲートペアが途中で分断されないこと");
+  bubbleChar.setSpeechBubble("🪵".repeat(80));
+  assert.equal(bubbleChar.speechBubble.text, "🪵".repeat(72) + "…", "サロゲートペアが途中で分断されないこと");
 
   // 2. 「」や助詞・断片から始まる壊れた出力を確実に拒否し、自然な日本語（へー/ますます/より高く/とはいえ/君、/… 等）は通すこと
   assert.equal(HuggingFaceClient.cleanDialogueResponse("「@Bob」に話しかけよう！", "Bob"), "");
@@ -1341,4 +1358,200 @@ test("Chat Quality: prevents mid-sentence fragment starts, removes odd offline l
   } finally {
     GAME_CONFIG.aiReplyDelay = origDelay;
   }
+});
+
+test("Chat Completeness, First-Person Guard & Move-While-Preparing Flow", async () => {
+  // 1. 1文完結＋2文目途中切れは1文目で綺麗にトリミングされること
+  assert.equal(
+    HuggingFaceClient.cleanDialogueResponse("こんにちは！次は木材を取引板で売ろうと思っ", "Player", "Alice"),
+    "@Player こんにちは！"
+  );
+  assert.equal(
+    HuggingFaceClient.cleanDialogueResponse("いい天気だね！でもね、", "Player", "Alice"),
+    "@Player いい天気だね！"
+  );
+
+  // 2. 1文目そのものが途中切れ（助詞・促音・名詞止め・括弧開きっぱなし・形容動詞連体形・句点付き途中切れ）の場合は拒否されること
+  for (const cutoff of [
+    "次は木材を取引板で売ろうと思っ",
+    "次は木材を取引板で売ろうと思っ。",
+    "私は木材を集めて。",
+    "これから畑のニンジンを。",
+    "今日は木材を集めて取引板",
+    "私は「木材を売ろう",
+    "木材を取引板で売って、",
+    "これから畑のニンジンを",
+    "私は新鮮な",
+    "広場の静かな",
+    "私は畑で野菜を育てていな",
+    "木材を売らな",
+    "取引板を見てみよ",
+    "木材の高さ",
+  ]) {
+    assert.equal(HuggingFaceClient.endsWithCutoff(cutoff), true, `Should detect cutoff: ${cutoff}`);
+    assert.equal(HuggingFaceClient.cleanDialogueResponse(cutoff, "Player", "Alice"), "", `Should reject cutoff: ${cutoff}`);
+  }
+  // 1文完結＋2文目が「私は新鮮な」のような途中切れでも1文目でトリミングされること
+  assert.equal(
+    HuggingFaceClient.cleanDialogueResponse("こんにちは！私は新鮮な", "Player", "Alice"),
+    "@Player こんにちは！"
+  );
+  // 句点省略でも自然な終止表現（丁寧体・常体・過去形・い形容詞・勧誘・末尾絵文字）は通すこと
+  for (const natural of [
+    "いい木材が見つかったよ",
+    "木材を集めて売るつもりだ",
+    "取引板で木材を売った",
+    "ニンジンを収穫する",
+    "取引板は面白い",
+    "木材を買おう",
+    "木材を採集したよ✨",
+  ]) {
+    assert.equal(HuggingFaceClient.endsWithCutoff(natural), false, `Should allow natural ending: ${natural}`);
+    assert.equal(HuggingFaceClient.cleanDialogueResponse(natural, "Player", "Alice"), `@Player ${natural}`);
+  }
+
+  // 3. 自分のことを「彼」「彼女」や自分の名前で三人称呼びする出力（文頭・文中・第三者名が後ろにある場合含む）を拒否し、明確な先行第三者言及は通すこと
+  for (const badThird of [
+    "彼は今、木材を集めているよ！",
+    "いま彼は取引板を見ているよ！",
+    "でも彼はもっと稼ぐつもりだよ！",
+    "これから彼は畑に行くよ！",
+    "彼から木材を買ってよ！",
+    "彼より高く売るつもりだよ！",
+    "彼はBobに負けないつもりだよ！",
+    "彼女は取引板を見ているよ！",
+    "Aliceは木材を採集したよ！",
+    "こんにちは！Aliceは今、木材を集めているよ！",
+    "元気だよ！アリスは取引板を見ているよ！",
+  ]) {
+    assert.equal(
+      HuggingFaceClient.cleanDialogueResponse(badThird, "Player", "Alice"),
+      "",
+      `Should reject self 3rd-person: ${badThird}`
+    );
+  }
+  assert.equal(HuggingFaceClient.cleanDialogueResponse("彼も負けないつもりだよ！", "Bob", "Alice"), "");
+  // 明確に第三者（Bob）の名前が前にある文脈での「彼」・一人称「私」・複合語「彼ら」は通すこと
+  assert.equal(
+    HuggingFaceClient.cleanDialogueResponse("Bobが木材を売っていたね！彼は建築を狙っているのかな？", "Player", "Alice"),
+    "@Player Bobが木材を売っていたね！彼は建築を狙っているのかな？"
+  );
+  assert.equal(
+    HuggingFaceClient.cleanDialogueResponse("私は今から木材を取引板に出すよ！", "Player", "Alice"),
+    "@Player 私は今から木材を取引板に出すよ！"
+  );
+  assert.equal(
+    HuggingFaceClient.cleanDialogueResponse("彼らには負けないように頑張るよ！", "Player", "Alice"),
+    "@Player 彼らには負けないように頑張るよ！"
+  );
+
+  // 3.5 オフライン返答に「いまいま」の重複誤字が無いこと＆空メンション「@Alice」が正しく空本文になること
+  const cmEmptyCheck = new ChatManager();
+  assert.equal(cmEmptyCheck._stripMention("@Alice"), "");
+  assert.equal(cmEmptyCheck._stripMention("@Aliceこんにちは"), "こんにちは");
+  const checkChars = buildCharacters(800, 600);
+  const checkRm = new ResourceManager();
+  checkRm.init(800, 600);
+  const checkBrain = new AIBrain(checkChars, cmEmptyCheck, { mode: "browser-hf" }, checkRm);
+  checkBrain.orderBook = new OrderBook();
+  for (const ch of checkChars.filter(c => !c.isPlayer)) {
+    for (let i = 0; i < 20; i++) {
+      assert.equal(checkBrain._generateOfflineReply(ch, "Player", "").includes("いまいま"), false);
+      assert.equal(checkBrain._generateOfflineReply(ch, "Player", "こんにちは").includes("いまいま"), false);
+    }
+  }
+
+  // 4. プロンプト見出し漏れやAIメタ発言を拒否すること
+  assert.equal(HuggingFaceClient.cleanDialogueResponse("【返答のルール】自然に応答します。", "Player", "Alice"), "");
+  assert.equal(HuggingFaceClient.cleanDialogueResponse("私はAIアシスタントとしてお手伝いします。", "Player", "Alice"), "");
+
+  // 5. LLMの文章生成中（callAI待機中）もキャラクターは止まらず動き続けること
+  const chars = buildCharacters(800, 600);
+  const alice = chars.find(c => c.id === "alice");
+  const player = chars.find(c => c.id === "player");
+  alice.x = 180;
+  alice.y = 200;
+  alice.wanderTarget = { x: 500, y: 200 };
+  alice.wanderTimer = 10;
+
+  let resolveAI = null;
+  const cm = new ChatManager();
+  const rm = new ResourceManager();
+  rm.init(800, 600);
+  const brain = new AIBrain(chars, cm, {
+    mode: "browser-hf",
+    _workerReady: true,
+    callAI() {
+      return new Promise(r => { resolveAI = r; });
+    },
+  }, rm);
+  brain.orderBook = new OrderBook();
+  brain.tts = { enabled: false };
+
+  const origThink = GAME_CONFIG.thinkingDisplayDuration;
+  GAME_CONFIG.thinkingDisplayDuration = 40;
+  try {
+    const reqPromise = brain.handlePlayerMessage("@Alice こんにちは！", alice, player);
+    await new Promise(r => setTimeout(r, 10));
+
+    // 文章生成中：isTalking=false, isTyping=false → 動き続けられる
+    assert.equal(brain.isProcessing.alice, true);
+    assert.equal(alice.isTalking, false);
+    assert.equal(alice.isTyping, false);
+    alice.updateWander(0.25, 800, 600, null);
+    assert.ok(alice.x > 180, "文章生成中もキャラは動き続けること");
+    const posBeforeThink = alice.x;
+
+    // 文章完成：ここで初めて立ち止まり「考え中」(isTyping=true)に入る
+    resolveAI("@Player 私は元気だよ！広場の相場を見ているところさ。");
+    await reqPromise;
+    assert.equal(alice.isTalking, true);
+    assert.equal(alice.isTyping, true);
+    assert.equal(cm.messages.length, 0, "考え中ポーズが終わるまでチャット表示を待つこと");
+    alice.updateWander(0.2, 800, 600, null);
+    assert.equal(alice.x, posBeforeThink, "考え中ポーズ中は移動停止すること");
+
+    // 思考完了後：チャット表示・発話中へ遷移
+    await new Promise(r => setTimeout(r, 70));
+    assert.equal(cm.messages.length, 1);
+    assert.equal(alice.isTyping, false);
+    assert.equal(alice.isSpeaking, true);
+    if (alice._talkingTimer) clearTimeout(alice._talkingTimer);
+    if (alice._thinkingTimer) clearTimeout(alice._thinkingTimer);
+  } finally {
+    GAME_CONFIG.thinkingDisplayDuration = origThink;
+  }
+
+  // 6. 同一キャラへの連続 _presentResponse がキュー直列化され、1件目が消えず思考バブルも残存吹き出しに隠れないこと
+  const origThink2 = GAME_CONFIG.thinkingDisplayDuration;
+  GAME_CONFIG.thinkingDisplayDuration = 20;
+  try {
+    const cm2 = new ChatManager();
+    const brain2 = new AIBrain(chars, cm2, { mode: "browser-hf" }, rm);
+    brain2.tts = { enabled: false };
+    alice.speechBubble = { text: "古い吹き出し", ttl: 5, maxTtl: 5 };
+    alice._hasPendingSpeech = false;
+    alice._speechQueue = [];
+    alice.isTalking = false;
+    alice.isTyping = false;
+    alice.isSpeaking = false;
+
+    brain2._presentResponse(alice, "@Player 1回目の返答だよ！", player.id, player.name, null);
+    assert.equal(alice.speechBubble, null, "思考開始時に前の吹き出しを消して💭考え中を表示すること");
+    brain2._presentResponse(alice, "@Player 2回目の返答だよ！", player.id, player.name, null);
+    assert.equal(alice._speechQueue.length, 1, "2回目は1回目を消さずにキューへ積まれること");
+
+    await new Promise(r => setTimeout(r, 50));
+    assert.equal(cm2.messages.length, 1);
+    assert.equal(cm2.messages[0].text, "@Player 1回目の返答だよ！");
+    if (alice._talkingTimer) clearTimeout(alice._talkingTimer);
+    if (alice._thinkingTimer) clearTimeout(alice._thinkingTimer);
+    alice._hasPendingSpeech = false;
+    alice._speechQueue = [];
+  } finally {
+    GAME_CONFIG.thinkingDisplayDuration = origThink2;
+  }
+
+  // 7. デフォルトの思考ポーズ時間が 3 秒（3000ms）に設定されていること
+  assert.equal(GAME_CONFIG.thinkingDisplayDuration, 3000);
 });

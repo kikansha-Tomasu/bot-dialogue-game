@@ -310,7 +310,7 @@ async function ensureModelLoaded(forceWasm = false) {
 }
 
 async function runGeneration(messages, maxNewTokens, temperature, doSample) {
-  const maxTokens = Math.min(Math.max(24, maxNewTokens), 110);
+  const maxTokens = Math.min(Math.max(24, maxNewTokens), 160);
   const opts = doSample && temperature > 0.05
     ? {
         max_new_tokens: maxTokens,
@@ -344,7 +344,7 @@ self.onmessage = async (event) => {
     const {
       requestId,
       messages,
-      maxNewTokens = 64,
+      maxNewTokens = 112,
       temperature = 0.55,
       doSample = true,
       allowStructuredPlan = false,
