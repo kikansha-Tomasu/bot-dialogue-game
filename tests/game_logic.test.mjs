@@ -852,7 +852,22 @@ test("Serverless GitHub Pages mode: HuggingFaceClient switches to browser-hf and
   assert.equal(tts._wavCache.has("Alice::テスト"), true);
   assert.equal(tts._wavCache.get("Alice::テスト").byteLength, 128);
 
-  // 5. 自動再生ブロック中および解除直後(600ms以内)の toggle() で勝手に音声OFFにならず、通常時は正しく切替できること
+  // 5. デフォルトで常に音声ONで起動し（古い localStorage=false を無視）、自動再生ブロック中/解除直後は勝手にOFFにならないこと
+  const origLS = globalThis.localStorage;
+  const fakeStore = new Map([["botGame.ttsEnabled", "false"]]);
+  globalThis.localStorage = {
+    getItem: k => (fakeStore.has(k) ? fakeStore.get(k) : null),
+    setItem: (k, v) => fakeStore.set(k, String(v)),
+    removeItem: k => fakeStore.delete(k),
+  };
+  try {
+    const freshTts = new TTSManager();
+    assert.equal(freshTts.enabled, true, "古い localStorage=false があってもデフォルトで音声ON起動すること");
+    assert.equal(fakeStore.has("botGame.ttsEnabled"), false, "古いミュート保存キーが除去されること");
+  } finally {
+    globalThis.localStorage = origLS;
+  }
+
   tts.enabled = true;
   tts.autoplayBlocked = true;
   assert.equal(tts.toggle(), true);

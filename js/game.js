@@ -902,14 +902,14 @@ class Game {
       ttsBtn.textContent = !on
         ? "🔇 音声OFF"
         : blocked
-          ? "🔇 タップで音ON"
+          ? "🔊 クリックで音ON"
           : isHfLocal
             ? "🔊 HF音声ON"
             : isHfBrowser
               ? "🔊 AI音声ON"
               : isHfBrowserLoading
                 ? `⏳ 音声 ${ttsManager.browserTtsProgress || 0}%`
-                : "🔊 ブラウザ音声";
+                : "🔊 音声ON";
       ttsBtn.setAttribute("aria-pressed", String(on && !blocked));
       ttsBtn.title = !on
         ? "読み上げOFF — クリックで有効化"
@@ -927,7 +927,7 @@ class Game {
           senderColor: "#8A6218",
           recipientId: this.player?.id || "player",
           recipientName: this.player?.name || "Player",
-          text: "🔇 ブラウザの自動再生制限で音声が保留中です。画面内または上部の「タップで音ON」をクリックすると再生されます。",
+          text: "🔇 ブラウザの自動再生制限で音声が保留中です。画面内または上部の「クリックで音ON」をクリックすると再生されます。",
           isAI: false,
         });
       }
@@ -957,7 +957,11 @@ class Game {
     });
     document.getElementById("hf-loader-close")?.addEventListener("click", e => {
       e.currentTarget.blur();
-      if (typeof ttsManager !== "undefined" && ttsManager) ttsManager.unlockAudio(true);
+      if (typeof ttsManager !== "undefined" && ttsManager) {
+        if (!ttsManager.enabled) ttsManager.setEnabled(true);
+        ttsManager.unlockAudio(true);
+        syncTtsBtn();
+      }
       this._hfBannerDismissed = true;
       document.getElementById("hf-loader-overlay")?.classList.add("hidden");
     });

@@ -132,7 +132,7 @@ class TTSManager {
       return;
     }
     try {
-      this._ttsWorker = new Worker("js/hf-tts-worker.js?v=gh16", { type: "module" });
+      this._ttsWorker = new Worker("js/hf-tts-worker.js?v=gh17", { type: "module" });
       this.browserTtsLoading = true;
       this.browserTtsError = "";
       this._ttsWorker.onmessage = (event) => {
@@ -391,15 +391,14 @@ class TTSManager {
   }
 
   _loadSavedEnabled() {
-    const fallback = typeof GAME_CONFIG !== "undefined" ? Boolean(GAME_CONFIG.ttsEnabled) : true;
+    // 過去の誤クリック等で localStorage に残った "false" で毎回ミュート起動しないよう、
+    // 起動時のデフォルトは常に音声ON（GAME_CONFIG.ttsEnabled）とし、古い保存値を除去する
     try {
       if (typeof localStorage !== "undefined") {
-        const saved = localStorage.getItem(TTS_STORAGE_KEY);
-        if (saved === "true") return true;
-        if (saved === "false") return false;
+        localStorage.removeItem(TTS_STORAGE_KEY);
       }
     } catch (_) {}
-    return fallback;
+    return typeof GAME_CONFIG !== "undefined" ? Boolean(GAME_CONFIG.ttsEnabled) : true;
   }
 
   setEnabled(enabled) {
@@ -407,11 +406,6 @@ class TTSManager {
     if (this.enabled) {
       this.unlockAudio(false);
     }
-    try {
-      if (typeof localStorage !== "undefined") {
-        localStorage.setItem(TTS_STORAGE_KEY, String(this.enabled));
-      }
-    } catch (_) {}
     if (!this.enabled) {
       this.stop();
     }
