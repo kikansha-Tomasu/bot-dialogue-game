@@ -15,6 +15,13 @@ class Game {
     this._hfBannerDismissed = false;
     this._hfBannerHideTimer = null;
     this._hfBannerCompletedShown = false;
+    this._loopErrorCount = 0;
+    this._lastLoopError = null;
+    this._errorBannerHideTimer = null;
+    // サブシステム別のサーキットブレーカー状態
+    this._subsystemFailures = {};  // { label: { count, lastFail, disabledUntil } }
+    this._circuitBreakerThreshold = 5;  // 連続失敗回数の閾値
+    this._circuitBreakerCooldown = 5000;  // 無効化期間 (ms)
 
     this._resizeCanvas();
 
@@ -1588,30 +1595,73 @@ class Game {
     const dt = Math.min((timestamp - this.lastTime) / 1000, 0.1);
     this.lastTime = timestamp;
 
-    this._update(dt);
-    this._render();
+    try {
+      this._update(dt);
+    } catch (err) {
+      this._recordLoopError("_update", err);
+    }
+    try {
+      this._render();
+    } catch (err) {
+      this._recordLoopError("_render", err);
+    }
 
     requestAnimationFrame(ts => this._loop(ts));
   }
 
+  _recordLoopError(source, err) {
+    // エラーを握り潰さず、スタックトレース付きで記録する
+    const msg = err && err.stack ? err.stack : String(err);
+    console.error(`[Game] ${source} error:`, msg);
+    this._loopErrorCount = (this._loopErrorCount || 0) + 1;
+    this._lastLoopError = { source, message: String(err), time: Date.now() };
+
+    // 失敗中のサブシステム一覧を構築
+    const failingSubsystems = Object.entries(this._subsystemFailures || {})
+      .filter(([, s]) => s.count > 0)
+      .map(([label, s]) => `${label}(${s.count}回)`)
+      .join(", ");
+
+    // エラーが3秒間発生しなければバナーを自動非表示にするタイマーをリセット
+    if (this._errorBannerHideTimer) clearTimeout(this._errorBannerHideTimer);
+    this._errorBannerHideTimer = setTimeout(() => {
+      const banner = document.getElementById("error-banner");
+      if (banner) banner.classList.remove("visible");
+    }, 3000);
+
+    // エラーバナーに最新の状態を表示（スロットリングなし、常に最新を表示）
+    const banner = document.getElementById("error-banner");
+    if (banner) {
+      const parts = [`⚠ 内部エラー ${this._loopErrorCount}回`];
+      if (failingSubsystems) parts.push(`失敗中: ${failingSubsystems}`);
+      parts.push("詳細はコンソールを確認");
+      banner.textContent = parts.join(" | ");
+      banner.classList.add("visible");
+    }
+  }
+
   _update(dt) {
     if (!this.mapRenderer._ready) return;
-    this._updatePlayerMovement(dt);
-    this._updatePlayerGather(dt);
+    // 各サブシステムを個別に保護し、1つの失敗が残りの処理をスキップしないようにする
+    this._safeUpdate("playerMovement", () => this._updatePlayerMovement(dt));
+    this._safeUpdate("playerGather", () => this._updatePlayerGather(dt));
 
     const w = this.canvas.width;
     const h = this.canvas.height;
-    this.aiChars.forEach(c => c.updateWander(dt, w, h, this.navGrid));
-    this.characters.forEach(c => c.updateSpeechBubble(dt));
+    this._safeUpdate("aiWander", () => this.aiChars.forEach(c => c.updateWander(dt, w, h, this.navGrid)));
+    this._safeUpdate("speechBubble", () => this.characters.forEach(c => c.updateSpeechBubble(dt)));
 
-    this.resourceManager.update(dt, this.progression.getRespawnSpeedMultiplier());
-    this.progression.update(dt);
+    this._safeUpdate("resourceManager", () => this.resourceManager.update(dt, this.progression.getRespawnSpeedMultiplier()));
+    this._safeUpdate("progression", () => this.progression.update(dt));
 
-    const ripeEvents = this.farmManager.update(
-      dt,
-      ownerId => this.progression.getFarmSpeedMultiplier(ownerId)
-    );
-    ripeEvents.forEach(({ plot, crop }) => {
+    let ripeEvents = [];
+    this._safeUpdate("farmManager", () => {
+      ripeEvents = this.farmManager.update(
+        dt,
+        ownerId => this.progression.getFarmSpeedMultiplier(ownerId)
+      );
+    });
+    this._safeUpdate("ripeEvents", () => ripeEvents.forEach(({ plot, crop }) => {
       if (plot.ownerId === this.player.id && crop) {
         this.chatManager.addMessage({
           senderId: "system",
@@ -1624,14 +1674,17 @@ class Game {
         });
         this._updateTownHudBadge();
       }
-    });
+    }));
 
-    const buildEvents = this.buildingManager.update(
-      dt,
-      this.characters,
-      ownerId => this.progression.getBuildingSpeedMultiplier(ownerId)
-    );
-    buildEvents.forEach(({ building, type, recipient }) => {
+    let buildEvents = [];
+    this._safeUpdate("buildingManager", () => {
+      buildEvents = this.buildingManager.update(
+        dt,
+        this.characters,
+        ownerId => this.progression.getBuildingSpeedMultiplier(ownerId)
+      );
+    });
+    this._safeUpdate("buildEvents", () => buildEvents.forEach(({ building, type, recipient }) => {
       this.chatManager.addMessage({
         senderId: "system",
         senderName: building.name,
@@ -1641,29 +1694,75 @@ class Game {
         text: `${building.emoji} ${RESOURCE_EMOJI[type]}×1 を ${recipient.name} に生産`,
         isAI: false,
       });
-    });
+    }));
 
-    this.aiBrain.update(dt);
-    this._updateProximityHint();
-    this._updateGatherButtonState();
+    this._safeUpdate("aiBrain", () => this.aiBrain.update(dt));
+    this._safeUpdate("proximityHint", () => this._updateProximityHint());
+    this._safeUpdate("gatherButton", () => this._updateGatherButtonState());
 
     // 開いているパネルの定期同期
-    if (this._isInventoryOpen() || this.progression.isOpen) {
-      this._inventoryRefreshTimer += dt;
-      if (this._inventoryRefreshTimer >= 1.0) {
-        this._inventoryRefreshTimer = 0;
-        if (this._isInventoryOpen()) this._renderInventoryPanel();
-        if (this.progression.isOpen && this.progression._activeTab === "farming") {
-          this._renderProgressionPanel();
+    this._safeUpdate("panelSync", () => {
+      if (this._isInventoryOpen() || this.progression.isOpen) {
+        this._inventoryRefreshTimer += dt;
+        if (this._inventoryRefreshTimer >= 1.0) {
+          this._inventoryRefreshTimer = 0;
+          if (this._isInventoryOpen()) this._renderInventoryPanel();
+          if (this.progression.isOpen && this.progression._activeTab === "farming") {
+            this._renderProgressionPanel();
+          }
         }
       }
-    }
+    });
 
     // 15秒ごとの定期オートセーブ
-    this._autoSaveTimer += dt;
-    if (this._autoSaveTimer >= 15.0) {
-      this._autoSaveTimer = 0;
-      this._scheduleSave();
+    this._safeUpdate("autoSave", () => {
+      this._autoSaveTimer += dt;
+      if (this._autoSaveTimer >= 15.0) {
+        this._autoSaveTimer = 0;
+        this._scheduleSave();
+      }
+    });
+  }
+
+  _safeUpdate(label, fn) {
+    const now = Date.now();
+    const state = this._subsystemFailures[label] || { count: 0, lastFail: 0, disabledUntil: 0 };
+
+    // サーキットブレーカー: 無効化期間中はスキップし、復旧を試みる
+    if (state.disabledUntil > now) {
+      // クールダウン期間中はスキップ（ただし10秒ごとに復旧を試みる）
+      if (now - state.lastFail < this._circuitBreakerCooldown) {
+        return;
+      }
+      // クールダウン経過 → 復旧を試みる
+      state.disabledUntil = 0;
+      state.count = 0;
+    }
+
+    try {
+      fn();
+      // 成功 → 失敗カウンターをリセット
+      if (state.count > 0) {
+        state.count = 0;
+        state.disabledUntil = 0;
+      }
+      this._subsystemFailures[label] = state;
+    } catch (err) {
+      state.count = (state.count || 0) + 1;
+      state.lastFail = now;
+      this._subsystemFailures[label] = state;
+      this._recordLoopError(`_update:${label}`, err);
+
+      // 閾値を超えた場合はサーキットブレーカーを開放
+      if (state.count >= this._circuitBreakerThreshold) {
+        state.disabledUntil = now + this._circuitBreakerCooldown;
+        console.warn(`[Game] Subsystem "${label}" disabled for ${this._circuitBreakerCooldown}ms after ${state.count} consecutive failures`);
+        const banner = document.getElementById("error-banner");
+        if (banner) {
+          banner.textContent = `⚠ サブシステム "${label}" が ${state.count} 回連続で失敗したため一時停止しました。${Math.ceil(this._circuitBreakerCooldown / 1000)}秒後に自動復旧を試みます。`;
+          banner.classList.add("visible");
+        }
+      }
     }
   }
 

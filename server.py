@@ -1268,8 +1268,12 @@ def tts_local():
     text = text[:500]
 
     voice = body.get("voice", "amitaro")
+    if voice not in _VALID_VOICES:
+        voice = "amitaro"
     speed = parse_tts_speed(body.get("speed", 1.0))
     style = str(body.get("style") or "")
+    if style and style not in _VALID_STYLES:
+        style = ""
 
     try:
         audio_bytes = _synthesize_sbv2_wav(text, voice=voice, speed=speed, requested_style=style)
