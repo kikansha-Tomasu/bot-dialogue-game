@@ -1589,6 +1589,11 @@ test("Human Persona & Multi-Pass Dialogue Polish (推敲): believes everyone is 
     "私はボットだから疲れないよ！",
     "这はとてもいい木材だよ！",
     "相手の発言：「こんにちは」 元気だよ！",
+    "あなた自身(私)は木材を集めたよ！",
+    "あなた自身（私）は広場の相場を見てるよ！",
+    "私（Alice）は元気だよ！",
+    "一人称で話すと、いい天気だね！",
+    "生身の人間として木材を売るよ！",
   ]) {
     assert.equal(HuggingFaceClient.cleanDialogueResponse(meta, "Player", "Alice"), "", `Should reject non-human/CN/leak text: ${meta}`);
   }

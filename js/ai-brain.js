@@ -669,11 +669,11 @@ class AIBrain {
       let prompt;
       if (isCompact) {
         const audienceLine = isBroadcast
-          ? "そばにいるみんなに聞こえるように、率直な感想や呼びかけを自然な話し言葉1〜2文で言ってください。"
-          : `近くにいた${target.name}に向かって、自然な話し言葉1〜2文で話しかけてください。`;
+          ? "そばにいるみんなに聞こえるように、率直な感想や呼びかけを1〜2文で言ってください。"
+          : `近くにいた${target.name}に、1〜2文で話しかけてください。`;
         prompt =
           `たった今、あなたは${actionFact}。\n` +
-          `（今のあなたの状況：${naturalCtx}）\n` +
+          `今の状況：${naturalCtx}\n` +
           audienceLine;
       } else {
         const invSummary = getInventorySummary(char.inventory, 5) || "なし";
@@ -1551,9 +1551,9 @@ class AIBrain {
         const isCompact = this.apiClient?.mode === "browser-hf";
         const prompt = isCompact
           ? `あなたは街の広場で${target.name}を見かけました。\n` +
-            `（今のあなたの状況：${this._buildNaturalHumanContext(initiator)}）\n` +
+            `今の状況：${this._buildNaturalHumanContext(initiator)}\n` +
             (recentStr ? `さっきの広場の会話：${recentStr}\n` : "") +
-            `${target.name}へ、雑談や商売の相談・取引の誘いなど、返事したくなる自然な話し言葉1〜2文で話しかけてください。`
+            `${target.name}へ、雑談や商売の相談・取引の誘いなど、返事したくなる1〜2文で話しかけてください。`
           : `あなたは街の広場で${target.name}に話しかけます。\n\n` +
             (recentStr ? `さっきまでの会話：${recentStr}\n\n` : "") +
             `${this._buildChatEconomicContext(initiator)}\n\n` +
@@ -1595,8 +1595,8 @@ class AIBrain {
       const prompt = isCompact
         ? `いま、${originalSender.name}があなたにこう話しかけてきました。\n` +
           `${originalSender.name}「${strippedText}」\n` +
-          `（今のあなたの状況：${this._buildNaturalHumanContext(responder)}）\n` +
-          `${originalSender.name}の言葉にきちんと反応して、自然な話し言葉1〜2文で返事をしてください。`
+          `今の状況：${this._buildNaturalHumanContext(responder)}\n` +
+          `${originalSender.name}の言葉にきちんと反応して、1〜2文で返事をしてください。`
         : `${originalSender.name}があなたにこう話しかけてきました：「${strippedText}」。\n\n` +
           `${this._buildChatEconomicContext(responder)}\n\n` +
           `同じ街に暮らす人間同士として、${originalSender.name}の発言（「${strippedText}」）に噛み合う自然な話し言葉1〜2文で返事をしてください。`;
@@ -1656,8 +1656,8 @@ class AIBrain {
       const prompt = isCompact
         ? `いま、${player.name}があなたにこう話しかけてきました。\n` +
           `${player.name}「${strippedMessage}」\n` +
-          `（今のあなたの状況：${this._buildNaturalHumanContext(targetChar)}）\n` +
-          `${player.name}の言葉にきちんと反応して、自然な話し言葉1〜2文で返事をしてください。`
+          `今の状況：${this._buildNaturalHumanContext(targetChar)}\n` +
+          `${player.name}の言葉にきちんと反応して、1〜2文で返事をしてください。`
         : `${player.name}があなたにこう話しかけてきました：「${strippedMessage}」。\n\n` +
           `${this._buildChatEconomicContext(targetChar)}\n\n` +
           `同じ街に暮らす人間同士として、${player.name}の発言（「${strippedMessage}」）に噛み合う自然な話し言葉1〜2文で返事をしてください。`;

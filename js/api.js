@@ -111,7 +111,7 @@ class HuggingFaceClient {
       return;
     }
     try {
-      this._worker = new Worker("js/hf-browser-worker.js?v=gh18", { type: "module" });
+      this._worker = new Worker("js/hf-browser-worker.js?v=gh19", { type: "module" });
       this._workerLoading = true;
       this._workerError = "";
       this._workerStage = "connecting";
@@ -444,8 +444,11 @@ class HuggingFaceClient {
     // アクセント付きラテン文字（× U+00D7 / ÷ U+00F7 を除外しつつ é, í, ǎ, ó 等の多言語崩壊トークンを検出）
     if (/[\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u024F\u1E00-\u1EFF]/.test(text)) return true;
 
-    // プロンプト見出し・推敲ラベル漏れ・非人間/ゲームメタ表現・簡体字中国語文法漏れを拒否
-    if (/(?:【(?:相手の直前の発言|あなたの状況|自分の状況|返答のルール|いま起きた出来事|現在の状況|あなたの戦法|直近の会話|ライバル総資産ランキング|あなたの資産状況|農業の状況|他のライバルの所持品|現在の注文板|直近の取引価格)】|役職[:：]|元のセリフ[:：]|言い直したセリフ[:：]|相手の発言[:：]|直す点[:：]|自然な話し言葉|AIアシスタント|人工知能|言語モデル|プロンプト|仮想世界|ゲームの中|2Dの世界|(?<![ァ-ヶー])ボット|NPC|キャラクターとして|プログラム|(?<![A-Za-z])(?:AI|Bot)(?![A-Za-z]))/i.test(text)) {
+    // プロンプト見出し・括弧付きメタ注釈「あなた自身(私)」・推敲ラベル漏れ・非人間/ゲームメタ表現・簡体字中国語文法漏れを拒否
+    if (/(?:【(?:相手の直前の発言|あなたの状況|自分の状況|返答のルール|いま起きた出来事|現在の状況|あなたの戦法|直近の会話|ライバル総資産ランキング|あなたの資産状況|農業の状況|他のライバルの所持品|現在の注文板|直近の取引価格)】|役職[:：]|元のセリフ[:：]|言い直したセリフ[:：]|相手の発言[:：]|直す点[:：]|今のあなたの状況|あなた自身|一人称|三人称|生身の人間|かぎ括弧|メンション|タメ口|翻訳調|書き言葉|話し言葉|セリフを|セリフだけ|言い切っ|AIアシスタント|人工知能|言語モデル|プロンプト|仮想世界|ゲームの中|2Dの世界|(?<![ァ-ヶー])ボット|NPC|キャラクターとして|プログラム|(?<![A-Za-z])(?:AI|Bot)(?![A-Za-z]))/i.test(text)) {
+      return true;
+    }
+    if (/[（(]\s*(?:私|自分|あなた|Alice|Bob|Carol|Player|アリス|ボブ|キャロル|プレイヤー|一人称)\s*[）)]/i.test(text)) {
       return true;
     }
     // 日本の常用漢字（把・没）は除外し、純粋な中国語文法語・簡体字のみを検出
@@ -697,13 +700,15 @@ class HuggingFaceClient {
         || String(historyUserMessage || "").replace(/^[A-Za-z0-9_]+\s*[:：]\s*/, "").trim();
       const speechTone = character.speechTone
         || (character.id === "bob" ? "casual_calm_male" : character.id === "carol" ? "casual_cheerful" : "casual_bright");
-      const promptWithHint = targetName
-        ? `${userMessage}\n（街に暮らす生身の人間として、一人称「私」で${targetName}へ直接話す自然な日本語1〜2文だけを最後まで言い切ってください。かぎ括弧や@メンションは不要）`
-        : `${userMessage}\n（街に暮らす生身の人間として、一人称「私」で自然な日本語の話し言葉1〜2文だけを最後まで言い切ってください。かぎ括弧や@メンションは不要）`;
+      const promptWithHint = this.mode === "browser-hf"
+        ? userMessage
+        : targetName
+          ? `${userMessage}\n（${targetName}へ直接話す自然な日本語1〜2文だけを最後まで出力してください）`
+          : `${userMessage}\n（自然な日本語1〜2文だけを最後まで出力してください）`;
 
       const browserSystem =
         `${character.compactPersonality || character.personality}\n` +
-        `街に暮らす一人の人間として、自然な日本語の話し言葉1〜2文だけを最後まで言い切ってください。`;
+        `普段の会話そのままの自然な日本語1〜2文だけを話してください。`;
 
       const buildDraftMessages = (history, extraHint = "") => {
         const content = extraHint ? `${promptWithHint}\n${extraHint}` : promptWithHint;
@@ -881,7 +886,7 @@ class HuggingFaceClient {
           const retryRaw = await generatePass(
             buildDraftMessages(
               character.conversationHistory,
-              "※必ず一人称「私」で、街に暮らす人間らしい自然な話し言葉1文を句点（。または！）まで言い切ってください。"
+              "短く自然な日本語1文だけを句点（。または！）で終えて答えてください。"
             ),
             96,
             0,
@@ -914,7 +919,7 @@ class HuggingFaceClient {
           const rescueRaw = await generatePass(
             buildDraftMessages(
               [],
-              "※一人称「私」で、短く自然な1文だけを句点（。または！）で終えて出力してください。"
+              "短く自然な1文だけを句点（。または！）で終えて答えてください。"
             ),
             88,
             0,
