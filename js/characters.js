@@ -3,13 +3,15 @@ const CHAR_FOOT_OFFSET_Y = 10;
 const CHAR_COLLISION_RADIUS = 8;
 
 class Character {
-  constructor({ id, name, color, emoji, startFx, startFy, personality, isPlayer, spriteFolder, model, ttsConfig, strategyProfile }) {
+  constructor({ id, name, color, emoji, startFx, startFy, personality, compactPersonality, speechTone, isPlayer, spriteFolder, model, ttsConfig, strategyProfile }) {
     this.id = id;
     this.name = name;
     this.color = color;
     this.emoji = emoji || "";
     this.isPlayer = isPlayer || false;
     this.personality = personality || "";
+    this.compactPersonality = compactPersonality || personality || "";
+    this.speechTone = speechTone || "casual_bright";
     this.model = model || null;
     this.ttsConfig = ttsConfig || null;
     this.strategyProfile = strategyProfile || null;

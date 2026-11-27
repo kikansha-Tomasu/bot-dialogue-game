@@ -230,6 +230,33 @@ class AIBrain {
     );
   }
 
+  // 会話プロンプト用の自然な日本語状況文（表や記号の羅列を避け、0.5Bでも人間らしい話し言葉を引き出す）
+  _buildNaturalHumanContext(char) {
+    const s = this._ensureStrategy(char);
+    const coins = Math.floor(char.inventory.coin || 0);
+    const heldParts = this._getTradableItemTypes()
+      .filter(t => (char.inventory[t] || 0) > 0)
+      .slice(0, 3)
+      .map(t => `${RESOURCE_LABEL[t] || t}${char.inventory[t]}${t === "fish" ? "匹" : "個"}`);
+    const invText = heldParts.length > 0
+      ? `手元には${heldParts.join("・")}とコイン${coins}枚があります`
+      : `所持金はコイン${coins}枚です`;
+
+    const parts = [invText];
+    const otherOrders = (this.orderBook?.orders || []).filter(o => o.posterId !== char.id);
+    if (otherOrders.length > 0) {
+      const o = otherOrders[0];
+      const itemLbl = RESOURCE_LABEL[o.resourceType] || o.resourceType;
+      const sideText = o.sellType === "coin" ? "買いたがっています" : "売りに出しています";
+      const priceCoins = o.sellType === "coin" ? o.sellAmount : o.buyAmount;
+      parts.push(`取引板では${o.posterName}が${itemLbl}を${priceCoins}コインで${sideText}`);
+    }
+    if (s?.goal) {
+      parts.push(`いまの目標は「${s.goal}」です`);
+    }
+    return parts.join("。") + "。";
+  }
+
   _parseStrategyPlan(text) {
     if (!text) return null;
     const focusMatch = text.match(/FOCUS\s*[:：]\s*(gather|farm|trade|build|chat)/i);
@@ -402,33 +429,34 @@ class AIBrain {
       : [];
 
     const townLine = this.progression
-      ? `現在の街レベル: Lv.${this.progression.townLevel}「${this.progression.getTownSpec().name}」\n`
+      ? `現在の街の発展度: 「${this.progression.getTownSpec().name}」\n`
       : "";
     const farmLine = this.farmManager
-      ? `農地の状況: ${this.farmManager.buildSummaryForAI(c)}\n`
+      ? `畑の様子: ${this.farmManager.buildSummaryForAI(c)}\n`
       : "";
+    const focusJa = { gather: "採集", farm: "農業・料理", trade: "取引", build: "建築", chat: "会話" }[s?.focusAction] || "採集";
     const strategyLine = s
-      ? `あなたの得意戦法: ${s.styleLabel} ／ 現在の長期作戦: ${s.goal}（重視行動: ${s.focusAction}, 狙う品目: ${RESOURCE_LABEL[s.targetItem] || s.targetItem}, 主な対抗ライバル: ${s.targetRival}）\n`
+      ? `あなたの得意なやり方: ${s.styleLabel} ／ いまの方針: ${s.goal}（重視: ${focusJa}, 注目品目: ${RESOURCE_LABEL[s.targetItem] || s.targetItem}, 意識している相手: ${s.targetRival}）\n`
       : "";
 
     const context =
       strategyLine +
-      `あなた（${c.name}）のインベントリ: ${invSummary}、コイン: ${coinAmt}\n` +
+      `あなた（${c.name}）の手持ち: ${invSummary}、コイン: ${coinAmt}枚\n` +
       townLine +
-      `ライバル総資産ランキング（全員が1位を競うライバルです）:\n${this._buildRivalRankingSummary(c)}\n` +
+      `街の資産順位（みんな一番を目指して競っています）:\n${this._buildRivalRankingSummary(c)}\n` +
       `現在の推定総資産内訳:\n${this._buildAssetValueSummary(c)}\n` +
-      `他のライバルのインベントリ:\n${this._buildOtherInventoriesSummary(c)}\n` +
-      `キャラクター位置:\n${this._buildPositionSummary(c)}\n` +
-      `資源ノードの残量:\n${this._buildResourceNodesSummary(c)}\n` +
+      `みんなの持ち物:\n${this._buildOtherInventoriesSummary(c)}\n` +
+      `みんなの居場所:\n${this._buildPositionSummary(c)}\n` +
+      `採集場所の残り:\n${this._buildResourceNodesSummary(c)}\n` +
       farmLine +
-      `現在稼働中の建物:\n${this._buildBuildingsSummary()}\n` +
-      (this.orderBook ? `現在の注文板:\n${this._buildOrderBookSummary()}\n` : "") +
+      `街に建っている施設:\n${this._buildBuildingsSummary()}\n` +
+      (this.orderBook ? `現在の取引板:\n${this._buildOrderBookSummary()}\n` : "") +
       `直近の取引価格:\n${this._buildPriceSummary()}\n` +
-      `建築可能な建物: ${affordable.length ? affordable.map(t => `${BUILDING_RECIPES[t].emoji}${BUILDING_RECIPES[t].name}`).join(", ") : "なし（資源不足）"}\n` +
+      `建てられる施設: ${affordable.length ? affordable.map(t => `${BUILDING_RECIPES[t].emoji}${BUILDING_RECIPES[t].name}`).join(", ") : "なし（材料不足）"}\n` +
       `自分の建物数: ${myBuildings.length}/2\n` +
-      `資源ノードの空き: ${hasNodes ? "あり" : "なし（全枯渇）"}\n` +
-      (executableOrders.length > 0 ? `板に今すぐ成立させられる注文が${executableOrders.length}件あります。trade + execute で約定できます。\n` : "") +
-      `現在の長期作戦に沿って、次に何をするか決めてください。`;
+      `採集できる場所: ${hasNodes ? "あり" : "なし（今は採り尽くされている）"}\n` +
+      (executableOrders.length > 0 ? `取引板に今すぐ成立させられる注文が${executableOrders.length}件あります。trade + execute で約定できます。\n` : "") +
+      `いまの方針に沿って、次に何をするか決めてください。`;
 
     const compactContext = this._buildCompactStrategicContext(c);
 
@@ -636,20 +664,33 @@ class AIBrain {
     this.isProcessing[char.id] = true;
 
     try {
-      const invSummary = getInventorySummary(char.inventory, 5) || "なし";
-      const rankInfo = this._getCharRank(char);
-      const s = this._ensureStrategy(char);
-      const strategyHint = s
-        ? `【あなたの戦法・作戦（内部方針なのでそのまま暴露せず会話に活かす）】${s.styleLabel}：${s.goal}\n`
-        : "";
-      const audienceLine = isBroadcast
-        ? `この出来事について、あなた自身（一人称「私」）の言葉として周囲のみんなに聞こえるように自然な日本語1〜2文で最後まで言い切ってください。特定の相手への@メンションは不要です。`
-        : `この出来事について、あなた自身（一人称「私」）の言葉として近くにいた${target.name}に向かって自然な日本語1〜2文で最後まで言い切ってください。`;
-      const prompt =
-        `【いま起きた出来事】${actionFact}\n` +
-        `【現在の状況】持ち物: ${invSummary} ／ 総資産ランキング${rankInfo.rank}位（${rankInfo.total.toFixed(1)}🪙）\n` +
-        strategyHint +
-        `${audienceLine}定型文ではなく今の状況に合わせた言葉にしてください。`;
+      const naturalCtx = this._buildNaturalHumanContext(char);
+      const isCompact = this.apiClient?.mode === "browser-hf";
+      let prompt;
+      if (isCompact) {
+        const audienceLine = isBroadcast
+          ? "そばにいるみんなに聞こえるように、率直な感想や呼びかけを自然な話し言葉1〜2文で言ってください。"
+          : `近くにいた${target.name}に向かって、自然な話し言葉1〜2文で話しかけてください。`;
+        prompt =
+          `たった今、あなたは${actionFact}。\n` +
+          `（今のあなたの状況：${naturalCtx}）\n` +
+          audienceLine;
+      } else {
+        const invSummary = getInventorySummary(char.inventory, 5) || "なし";
+        const rankInfo = this._getCharRank(char);
+        const s = this._ensureStrategy(char);
+        const strategyHint = s
+          ? `あなたの得意なやり方：${s.styleLabel}（${s.goal}）\n`
+          : "";
+        const audienceLine = isBroadcast
+          ? "そばにいるみんなに聞こえるように、一人称「私」で自然な話し言葉1〜2文の感想や呼びかけを言ってください。特定の相手への@メンションは不要です。"
+          : `近くにいた${target.name}に向かって、一人称「私」で自然な話し言葉1〜2文で話しかけてください。`;
+        prompt =
+          `たった今、あなたは${actionFact}。\n` +
+          `今の状況：手元の持ち物は ${invSummary}、資産順位は${rankInfo.rank}位（${rankInfo.total.toFixed(1)}コイン相当）です。\n` +
+          strategyHint +
+          `${audienceLine}定型文ではなく今の気持ちに合わせて話してください。`;
+      }
 
       const response = await this.apiClient.callAI(
         char,
@@ -881,7 +922,7 @@ class AIBrain {
     const msgMatch = planText?.match(/MESSAGE\s*[:：]\s*(.+)/i);
     const customMsg = msgMatch ? msgMatch[1].trim() : null;
     const prodNote = ben ? `（${RESOURCE_EMOJI[ben.generates]}${RESOURCE_LABEL[ben.generates]}を自動生産）` : "";
-    const actionFact = `マップ上に${r.emoji}${r.name}を建築した${prodNote}`;
+    const actionFact = `街に${r.emoji}${r.name}を建てた${prodNote}`;
     const fallback = `${r.emoji}${r.name}を建てたよ！`;
     this._speakActionViaLLM(char, target, actionFact, fallback, customMsg, { replyRate: 0.45 });
   }
@@ -1118,8 +1159,8 @@ class AIBrain {
       .filter(c => c.id !== char.id)
       .map(c => {
         const dist = Math.round(Math.hypot(c.x - char.x, c.y - char.y));
-        const label = dist < 95 ? "近く" : dist < 250 ? "中距離" : "遠く";
-        return `  ${c.name}: ${label}（約${dist}px）`;
+        const label = dist < 95 ? "すぐ近く" : dist < 250 ? "少し離れた場所" : "遠く";
+        return `  ${c.name}: ${label}`;
       }).join("\n");
   }
 
@@ -1138,9 +1179,9 @@ class AIBrain {
       const totalAmount = available.reduce((s, n) => s + n.amount, 0);
       const nearest = available[0];
       const nearestStr = nearest
-        ? `最近傍ノード: 距離${nearest.dist}px 残量${nearest.amount}/${nearest.max}`
-        : "全ノード枯渇中";
-      return `  ${RESOURCE_EMOJI[type]} ${RESOURCE_LABEL[type]}: 合計残量${totalAmount} （${nearestStr}）`;
+        ? `一番近い場所: ${nearest.dist < 120 ? "すぐ近く" : nearest.dist < 280 ? "少し先" : "やや遠め"}（残り${nearest.amount}/${nearest.max}）`
+        : "今は採り尽くされている";
+      return `  ${RESOURCE_EMOJI[type]} ${RESOURCE_LABEL[type]}: 合計残り${totalAmount}（${nearestStr}）`;
     }).join("\n");
   }
 
@@ -1179,18 +1220,19 @@ class AIBrain {
     const lines = [];
     const s = this._ensureStrategy(char);
     if (s) {
-      lines.push(`【あなたの得意戦法・現在の長期作戦（内部戦略のため直接暴露せず交渉に活かすこと）】\n  ${s.styleLabel}: ${s.goal}（重視: ${s.focusAction} / 狙い: ${RESOURCE_LABEL[s.targetItem] || s.targetItem}）`);
+      const focusJa = { gather: "採集", farm: "農業・料理", trade: "取引", build: "建築", chat: "会話" }[s.focusAction] || "採集";
+      lines.push(`あなたの得意なやり方・いまの方針（手の内は明かさず会話に活かす）：\n  ${s.styleLabel}・${s.goal}（重視: ${focusJa} / 注目: ${RESOURCE_LABEL[s.targetItem] || s.targetItem}）`);
     }
-    lines.push(`【ライバル総資産ランキング】\n${this._buildRivalRankingSummary(char)}`);
-    lines.push(`【あなたの資産状況】\n${this._buildAssetValueSummary(char)}`);
+    lines.push(`街の資産順位：\n${this._buildRivalRankingSummary(char)}`);
+    lines.push(`あなたの手持ちと資産：\n${this._buildAssetValueSummary(char)}`);
     if (this.farmManager) {
-      lines.push(`【農業の状況】\n  ${this.farmManager.buildSummaryForAI(char)}`);
+      lines.push(`畑の様子：\n  ${this.farmManager.buildSummaryForAI(char)}`);
     }
-    lines.push(`【他のライバルの所持品】\n${this._buildOtherInventoriesSummary(char)}`);
+    lines.push(`みんなの持ち物：\n${this._buildOtherInventoriesSummary(char)}`);
     if (this.orderBook) {
       const book = this._buildOrderBookSummary();
-      if (book !== "（注文なし）") lines.push(`【現在の注文板】\n${book}`);
-      lines.push(`【直近の取引価格】\n${this._buildPriceSummary()}`);
+      if (book !== "（注文なし）") lines.push(`現在の取引板：\n${book}`);
+      lines.push(`最近の取引相場：\n${this._buildPriceSummary()}`);
     }
     return lines.join("\n");
   }
@@ -1229,8 +1271,8 @@ class AIBrain {
       : [this._nearestOther(player) || this.aiChars[0]];
 
     celebrators.forEach((char, idx) => {
-      const actionFact = `${player.name}が街をLv.${spec.level}「${spec.name}」へ発展させた（${spec.visualSummary}）`;
-      const fallback = `@${player.name} 街がLv.${spec.level}「${spec.name}」に発展したね！でも資産勝負では負けないよ！`;
+      const actionFact = `${player.name}のおかげで街が「${spec.name}」へ発展した（${spec.visualSummary}）`;
+      const fallback = `@${player.name} 街が「${spec.name}」に発展したね！でも商売の勝負では負けないよ！`;
       setTimeout(() => {
         this._speakActionViaLLM(char, player, actionFact, fallback, null);
       }, idx * 1400);
@@ -1501,24 +1543,21 @@ class AIBrain {
           initiator.conversationHistory = initiator.conversationHistory.slice(-GAME_CONFIG.maxContextMessages);
         }
       } else {
-        const recent = this.chatManager.getRecentMessages(4);
+        const recent = this.chatManager.getRecentMessages(3);
         const recentStr = recent.length > 0
-          ? recent.map(m => `${m.senderName}→${m.recipientName}: ${LMStudioClient.stripLeadingMention(m.text)}`).join(" / ")
-          : "なし";
+          ? recent.map(m => `${m.senderName}「${LMStudioClient.stripLeadingMention(m.text)}」`).join(" / ")
+          : "";
 
         const isCompact = this.apiClient?.mode === "browser-hf";
         const prompt = isCompact
-          ? `あなたは${initiator.name}です。一人称「私」で${target.name}へ直接話しかけてください。\n` +
-            `【自分の状況】${this._buildCompactStrategicContext(initiator)}\n` +
-            `【直近の会話】${recentStr}\n` +
-            `取引の提案・交渉・ライバルへの牽制など、${target.name}が返事したくなる具体的な1〜2文を自然な日本語で最後まで言い切ってください。`
-          : `あなたは${initiator.name}です。一人称「私」で${target.name}に向かって話しかけてください。\n\n` +
-            `最近の会話の流れ: ${recentStr}\n\n${this._buildChatEconomicContext(initiator)}\n\n` +
-            `【チャットの目的】\n` +
-            `あなたの総資産を増やすために、相手に取引を持ちかけたり交渉したりしてください。\n` +
-            `- 自分の資源・作物・料理を売りたい場合、具体的な価格や数量を提示して勧誘してください\n` +
-            `- 相手の所持品が欲しければ買取りや提案をしてください\n` +
-            `- 内部戦略は明かさず、一人称「私」で自然に1〜2文で最後まで言い切ってください。`;
+          ? `あなたは街の広場で${target.name}を見かけました。\n` +
+            `（今のあなたの状況：${this._buildNaturalHumanContext(initiator)}）\n` +
+            (recentStr ? `さっきの広場の会話：${recentStr}\n` : "") +
+            `${target.name}へ、雑談や商売の相談・取引の誘いなど、返事したくなる自然な話し言葉1〜2文で話しかけてください。`
+          : `あなたは街の広場で${target.name}に話しかけます。\n\n` +
+            (recentStr ? `さっきまでの会話：${recentStr}\n\n` : "") +
+            `${this._buildChatEconomicContext(initiator)}\n\n` +
+            `同じ街で暮らす人間同士として、資産を増やすための取引の相談や雑談を、一人称「私」で自然な話し言葉1〜2文で話しかけてください。`;
 
         response = await this.apiClient.callAI(initiator, prompt, target.name, `(${target.name}に話しかける)`);
         if (!this.llmAvailable) {
@@ -1554,20 +1593,19 @@ class AIBrain {
       const strippedText = LMStudioClient.stripLeadingMention(originalText);
       const isCompact = this.apiClient?.mode === "browser-hf";
       const prompt = isCompact
-        ? `【相手の直前の発言】${originalSender.name}があなた（${responder.name}）に言いました：「${strippedText}」\n` +
-          `【あなたの状況】${this._buildCompactStrategicContext(responder)}\n` +
-          `【返答のルール】${originalSender.name}が言った内容にきちんと反応し、一人称「私」で賛成・断り・質問・逆提案などを自然な日本語1〜2文で最後まで言い切ってください。`
-        : `${originalSender.name}があなた（${responder.name}）に話しかけました：「${strippedText}」。\n\n` +
+        ? `いま、${originalSender.name}があなたにこう話しかけてきました。\n` +
+          `${originalSender.name}「${strippedText}」\n` +
+          `（今のあなたの状況：${this._buildNaturalHumanContext(responder)}）\n` +
+          `${originalSender.name}の言葉にきちんと反応して、自然な話し言葉1〜2文で返事をしてください。`
+        : `${originalSender.name}があなたにこう話しかけてきました：「${strippedText}」。\n\n` +
           `${this._buildChatEconomicContext(responder)}\n\n` +
-          `【返答の指針】\n` +
-          `- 相手の発言内容（「${strippedText}」）にきちんと噛み合う返答をしてください\n` +
-          `- 取引提案なら有利かどうか判断して受け入れ・断り・カウンターオファーを返してください\n` +
-          `- 自分の内部戦略は明かさず、一人称「私」で1〜2文の自然な日本語で最後まで言い切ってください。`;
+          `同じ街に暮らす人間同士として、${originalSender.name}の発言（「${strippedText}」）に噛み合う自然な話し言葉1〜2文で返事をしてください。`;
       const response = await this.apiClient.callAI(
         responder,
         prompt,
         originalSender.name,
-        `${originalSender.name}: ${strippedText}`
+        `${originalSender.name}: ${strippedText}`,
+        { incomingText: strippedText }
       );
       if (!this.llmAvailable) {
         this.llmAvailable = true;
@@ -1616,20 +1654,19 @@ class AIBrain {
       const strippedMessage = LMStudioClient.stripLeadingMention(playerMessage);
       const isCompact = this.apiClient?.mode === "browser-hf";
       const prompt = isCompact
-        ? `【相手の直前の発言】${player.name}があなた（${targetChar.name}）に言いました：「${strippedMessage}」\n` +
-          `【あなたの状況】${this._buildCompactStrategicContext(targetChar)}\n` +
-          `【返答のルール】${player.name}の発言内容にきちんと反応して、一人称「私」で自然な日本語1〜2文で最後まで言い切ってください。`
-        : `${player.name}があなた（${targetChar.name}）に話しかけました：「${strippedMessage}」。\n\n` +
+        ? `いま、${player.name}があなたにこう話しかけてきました。\n` +
+          `${player.name}「${strippedMessage}」\n` +
+          `（今のあなたの状況：${this._buildNaturalHumanContext(targetChar)}）\n` +
+          `${player.name}の言葉にきちんと反応して、自然な話し言葉1〜2文で返事をしてください。`
+        : `${player.name}があなたにこう話しかけてきました：「${strippedMessage}」。\n\n` +
           `${this._buildChatEconomicContext(targetChar)}\n\n` +
-          `【返答の指針】\n` +
-          `- 相手の発言（「${strippedMessage}」）にきちんと噛み合う返答をしてください\n` +
-          `- 取引提案なら有利かどうか判断して受け入れ・断り・カウンターオファーを返してください\n` +
-          `- 自分の内部戦略は明かさず、一人称「私」で1〜2文の自然な日本語で最後まで言い切ってください。`;
+          `同じ街に暮らす人間同士として、${player.name}の発言（「${strippedMessage}」）に噛み合う自然な話し言葉1〜2文で返事をしてください。`;
       const response = await this.apiClient.callAI(
         targetChar,
         prompt,
         player.name,
-        `${player.name}: ${strippedMessage}`
+        `${player.name}: ${strippedMessage}`,
+        { incomingText: strippedMessage }
       );
       if (!this.llmAvailable) {
         this.llmAvailable = true;

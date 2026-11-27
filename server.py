@@ -107,7 +107,9 @@ HF_CHARACTER_PROFILES = {
         "style_weight": 1.0,
         "few_shot": [
             {"role": "user", "content": "Player「こんにちは！今日は何をしてるの？」"},
-            {"role": "assistant", "content": "こんにちは！私は広場を歩き回りながら、相場の動きと畑の育ち具合を観察しているところだよ。何か面白いこと見つけた？"},
+            {"role": "assistant", "content": "こんにちは！私は広場の相場を眺めながら、何か掘り出し物がないか探していたところだよ。そっちは調子どう？"},
+            {"role": "user", "content": "Bob「木材が少し余ってきたよ。」"},
+            {"role": "assistant", "content": "おっ、いいニュースだね！手頃な値段で取引板に出してくれたら、私がすぐ買いに行くよ。"},
         ],
     },
     "bob": {
@@ -123,7 +125,9 @@ HF_CHARACTER_PROFILES = {
         "style_weight": 1.0,
         "few_shot": [
             {"role": "user", "content": "Player「こんにちは！今日は何をしてるの？」"},
-            {"role": "assistant", "content": "静かな風を感じながら、私はこの街の移ろいを眺めていたよ。焦らず畑を育てて、豊かな実りを待つつもりさ。"},
+            {"role": "assistant", "content": "静かな風を感じながら、私はこの街の移ろいを眺めていたよ。焦らず木を集めて、しっかりした建物を建てるつもりさ。"},
+            {"role": "user", "content": "Alice「相場が動いてきたね！」"},
+            {"role": "assistant", "content": "そうだな、賑わってきたのはいいことだ。私は慌てず、納得できる値段のときだけ動くよ。"},
         ],
     },
     "carol": {
@@ -140,6 +144,8 @@ HF_CHARACTER_PROFILES = {
         "few_shot": [
             {"role": "user", "content": "Player「こんにちは！今日は何をしてるの？」"},
             {"role": "assistant", "content": "こんにちは！私は畑で新鮮な野菜を育てて、とびきり美味しい料理を作ろうと思ってるところだよ！"},
+            {"role": "user", "content": "Bob「いい匂いがしてきたな。」"},
+            {"role": "assistant", "content": "えへへ、気づいてくれた？もうすぐ焼き上がるから、できたら取引板に並べるね！"},
         ],
     },
 }
@@ -438,23 +444,28 @@ def _detect_character_profile(requested_model: str, messages: list) -> dict:
         return HF_CHARACTER_PROFILES["carol"]
 
     sys_text = " ".join(m.get("content", "") for m in messages if m.get("role") == "system")
-    if "あなたはBobです" in sys_text:
+    if re.search(r"(?:人間の(?:男性、?)?|あなたは)Bobです", sys_text):
         return HF_CHARACTER_PROFILES["bob"]
-    if "あなたはCarolです" in sys_text:
+    if re.search(r"(?:人間の(?:女性、?)?|あなたは)Carolです", sys_text):
         return HF_CHARACTER_PROFILES["carol"]
     return HF_CHARACTER_PROFILES["alice"]
 
 
 def _extract_target_mention(messages: list) -> str:
-    """user メッセージの相手指定（@Player / Playerへのセリフ 等）を抽出。全員向けなら空文字を返す。"""
+    """user メッセージの相手指定（@Player / Playerへのセリフ 等）を抽出。全員向け・推敲パスなら空文字を返す。"""
     for m in reversed(messages):
         if m.get("role") == "user":
             text = m.get("content", "")
-            if "特定の相手への@メンションは不要" in text or "周囲のみんなに聞こえるように" in text:
+            if (
+                "特定の相手への@メンションは不要" in text
+                or "周囲のみんなに聞こえるように" in text
+                or "そばにいるみんなに聞こえるように" in text
+                or "元のセリフ：" in text
+            ):
                 return ""
             hit = re.search(
                 r"(?:[@＠](Player|Alice|Bob|Carol)(?![A-Za-z0-9_])"
-                r"|(Player|Alice|Bob|Carol)(?:へのセリフ|に向かって|へ直接|があなた))",
+                r"|(Player|Alice|Bob|Carol)(?:へのセリフ|へ直接|に向かって|があなた))",
                 text,
                 re.IGNORECASE,
             )
@@ -570,7 +581,10 @@ def _clean_dialogue_output(raw_text: str, target_name: str) -> str:
     # 先頭の重複改行・引用符・不要なロールラベルを除去
     text = re.sub(r"^(?:Assistant|Alice|Bob|Carol)\s*[:：]\s*", "", text, flags=re.IGNORECASE).strip()
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-    first = lines[0] if lines else ""
+    # 推敲パス等で「元のセリフ：...\n言い直したセリフ：...」と2行出力された場合は言い直し行を採用
+    rewrite_line = next((ln for ln in lines if re.match(r"^(?:言い直したセリフ|自然なセリフ|推敲後|修正後)\s*[:：]", ln)), None)
+    first = rewrite_line if rewrite_line is not None else (lines[0] if lines else "")
+    first = re.sub(r"^(?:言い直したセリフ|自然なセリフ|推敲後|修正後|返答|返信|セリフ|発言)\s*[:：]\s*", "", first).strip()
     for src, dst in (("发现", "発見"), ("药", "薬"), ("气", "気"), ("乐", "楽"), ("买", "買"), ("卖", "売"), ("钱", "銭")):
         first = first.replace(src, dst)
     # メンション重複を整理（Python \w は日本語にも一致するため ASCII 名＋別名＋区切りのみ安全に除去）
@@ -613,7 +627,7 @@ def _clean_dialogue_output(raw_text: str, target_name: str) -> str:
 
 
 def _generate_with_llama_cpp(
-    messages: list, max_new_tokens: int = 120, requested_model: str = ""
+    messages: list, max_new_tokens: int = 120, requested_model: str = "", temperature: float | None = None
 ) -> dict:
     """
     Hugging Face の自然・高性能日本語 GGUF モデル (Gemma-3-4B / Sarashina2.2-3B) を
@@ -625,19 +639,29 @@ def _generate_with_llama_cpp(
     is_gemma = "gemma" in active_repo.lower()
 
     sys_text = "\n".join(m["content"] for m in messages if m["role"] == "system")
-    is_master_action = "PLAN:" in sys_text and "RESOURCE:" in sys_text
-    target_name = _extract_target_mention(messages)
+    last_user = next((m.get("content", "") for m in reversed(messages) if m.get("role") == "user"), "")
+    is_structured_plan = (
+        ("PLAN:" in sys_text and "RESOURCE:" in sys_text)
+        or ("FOCUS:" in sys_text and "GOAL:" in sys_text)
+    )
+    is_polish_pass = "元のセリフ：" in last_user or "言い直したセリフ" in sys_text
+    target_name = "" if (is_structured_plan or is_polish_pass) else _extract_target_mention(messages)
 
-    if is_master_action:
+    if is_structured_plan:
         chat_msgs = normalize_hf_messages(messages, fold_system=is_gemma)
         gen_tokens = min(max(80, int(max_new_tokens or 140)), 180)
         stop_seqs = ["\n\n\n", "</s>", "<|im_end|>", "<end_of_turn>", "<eos>"]
+    elif is_polish_pass:
+        # 推敲パスでは通常会話 few_shot を混ぜず、リライト指示をそのまま渡す
+        chat_msgs = normalize_hf_messages(messages, fold_system=is_gemma)
+        gen_tokens = min(max(64, int(max_new_tokens or 104)), 140)
+        stop_seqs = ["\n\n", "</s>", "<|im_end|>", "<end_of_turn>", "<eos>"]
     else:
         non_sys = [m for m in messages if m["role"] != "system"]
         enhanced_sys = (
             f"{sys_text}\n"
-            "重要: 自分をAIやアシスタントとは呼ばず、街に暮らすキャラクター本人として自然な口調の日本語1〜2文で返答してください。"
-            "英単語やアルファベットは混ぜず、すべて自然な日本語（ひらがな・カタカナ・漢字）だけで話してください。"
+            "重要: あなたはこの街に暮らす生身の人間です。相手も同じ街に暮らす人間として、自然な話し言葉の日本語1〜2文で返答してください。"
+            "英単語や中国語、硬い書き言葉は避け、普段の会話のように自然に話してください。"
         ).strip()
         chat_msgs = (
             [{"role": "system", "content": enhanced_sys}]
@@ -648,11 +672,18 @@ def _generate_with_llama_cpp(
         gen_tokens = min(max(80, int(max_new_tokens or 120)), 160)
         stop_seqs = ["\n", "</s>", "<|im_end|>", "<end_of_turn>", "<eos>"]
 
+    eff_temp = profile["temperature"]
+    if temperature is not None:
+        try:
+            eff_temp = max(0.0, min(1.0, float(temperature)))
+        except (TypeError, ValueError):
+            pass
+
     with _llama_lock:
         result = llm.create_chat_completion(
             messages=chat_msgs,
             max_tokens=gen_tokens,
-            temperature=profile["temperature"],
+            temperature=eff_temp,
             top_p=profile["top_p"],
             repeat_penalty=profile["repeat_penalty"],
             stop=stop_seqs,
@@ -665,11 +696,11 @@ def _generate_with_llama_cpp(
         .strip()
     )
 
-    if is_master_action:
+    if is_structured_plan:
         reply = raw_reply
     else:
-        fallback_hi = f"@{target_name} こんにちは！" if target_name else "こんにちは！"
-        reply = _clean_dialogue_output(raw_reply, target_name) or fallback_hi
+        # 整形失敗時は「こんにちは！」で誤魔化さず空文字を返し、クライアント側の推敲・再試行に委ねる
+        reply = _clean_dialogue_output(raw_reply, target_name)
 
     return {
         "id": "hf-local-llama-cpp",
@@ -757,13 +788,16 @@ def _generate_with_local_transformers(
 
 
 def _generate_local_hf_chat(
-    messages: list, max_new_tokens: int = 100, requested_model: str = ""
+    messages: list, max_new_tokens: int = 100, requested_model: str = "", temperature: float | None = None
 ) -> dict:
     """llama.cpp (Sarashina2.2-3B / TinySwallow-1.5B GGUF) を最優先し、未導入時のみ transformers を使用"""
     if _check_llama_cpp_available():
         try:
             return _generate_with_llama_cpp(
-                messages, max_new_tokens=max_new_tokens, requested_model=requested_model
+                messages,
+                max_new_tokens=max_new_tokens,
+                requested_model=requested_model,
+                temperature=temperature,
             )
         except Exception as e:
             if not _check_transformers_available():
@@ -1115,6 +1149,7 @@ def chat():
                 normalized_msgs,
                 max_new_tokens=int(body.get("max_tokens") or 100),
                 requested_model=requested_model,
+                temperature=body.get("temperature"),
             )
             return jsonify(local_data), 200
         except Exception as e:
@@ -1170,6 +1205,7 @@ def chat():
                 normalized_msgs,
                 max_new_tokens=int(body.get("max_tokens") or 100),
                 requested_model=requested_model,
+                temperature=body.get("temperature"),
             )
             return jsonify(local_data), 200
         except Exception as e:

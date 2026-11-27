@@ -257,6 +257,25 @@ class TestServerSecurityAndAPI(unittest.TestCase):
             server._clean_dialogue_output("こんにちは！次は木材を売ろうと思っ", "Player"),
             "@Player こんにちは！",
         )
+        # 人間ペルソナ更新後のキャラ自動検出と推敲パス行抽出が正しく動くこと
+        prof_bob = server._detect_character_profile(
+            "generic-model",
+            [{"role": "system", "content": "あなたはこの街で暮らす人間の男性、Bobです。"}],
+        )
+        self.assertEqual(prof_bob["voice"], "jvnv-M1-jp")
+        prof_carol = server._detect_character_profile(
+            "generic-model",
+            [{"role": "system", "content": "あなたはこの街で暮らす人間のCarolです。"}],
+        )
+        self.assertEqual(prof_carol["voice"], "jvnv-F2-jp")
+        self.assertEqual(
+            server._extract_target_mention([{"role": "user", "content": "相手の発言：「Bobが売ったの？」\n元のセリフ：いい木材だ。\n言い直したセリフ："}]),
+            "",
+        )
+        self.assertEqual(
+            server._clean_dialogue_output("元のセリフ：木材を獲得しました。\n言い直したセリフ：いい木材が取れたよ！", ""),
+            "いい木材が取れたよ！",
+        )
 
 
 if __name__ == "__main__":

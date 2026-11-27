@@ -48,7 +48,8 @@ function isCorruptedJapanese(rawText, allowStructuredPlan = false) {
   const text = String(rawText || "").trim();
   if (!text) return true;
   if (/[\uFFFD\u0300-\u036F\u0000-\u0008\u000B\u000C\u000E-\u001F]/.test(text)) return true;
-  if (/[\u00C0-\u024F\u1E00-\u1EFF]/.test(text)) return true;
+  // × (U+00D7) や ÷ (U+00F7) を誤検知しないよう除外したアクセント付きラテン文字検出
+  if (/[\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u024F\u1E00-\u1EFF]/.test(text)) return true;
 
   if (allowStructuredPlan) {
     // PLAN / FOCUS 応答では MESSAGE: / GOAL: 行があればその日本語品質を検証し、無ければキーワードのみ確認
@@ -84,11 +85,12 @@ function isCorruptedJapanese(rawText, allowStructuredPlan = false) {
 
 function cleanJapanese(text) {
   let out = String(text || "").trim();
+  // 純粋な簡体字→新字体のみ正規化（中国語文法語「这/们/说」は偽の仮名に化けさせず api.js 側で検出・再生成させる）
   const map = [
     ["发现", "発見"], ["药", "薬"], ["气", "気"], ["乐", "楽"],
-    ["买", "買"], ["卖", "売"], ["钱", "銭"], ["这", "この"],
+    ["买", "買"], ["卖", "売"], ["钱", "銭"],
     ["个", "個"], ["农", "農"], ["种", "種"], ["欢", "歓"],
-    ["说", "言"], ["话", "話"], ["对", "対"], ["们", "たち"],
+    ["话", "話"], ["对", "対"],
   ];
   for (const [src, dst] of map) {
     out = out.split(src).join(dst);
@@ -315,8 +317,8 @@ async function runGeneration(messages, maxNewTokens, temperature, doSample) {
     ? {
         max_new_tokens: maxTokens,
         do_sample: true,
-        temperature: Math.min(0.65, Math.max(0.2, temperature)),
-        top_k: 35,
+        temperature: Math.min(0.60, Math.max(0.2, temperature)),
+        top_k: 30,
         top_p: 0.85,
         repetition_penalty: 1.12,
       }

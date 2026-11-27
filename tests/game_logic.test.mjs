@@ -1354,7 +1354,7 @@ test("Chat Quality: prevents mid-sentence fragment starts, removes odd offline l
     assert.equal(replyCalls.length, 1);
     assert.equal(replyCalls[0].charId, "bob");
     assert.equal(replyCalls[0].targetName, "Alice");
-    assert.match(replyCalls[0].prompt, /【相手の直前の発言】.*木材を安く売ってくれない？/);
+    assert.match(replyCalls[0].prompt, /Alice「木材を安く売ってくれない？」/);
     assert.equal(presentedLogs.length, 1);
     assert.equal(presentedLogs[0].charId, "bob");
     assert.equal(presentedLogs[0].recipientName, "Alice");
@@ -1569,4 +1569,150 @@ test("Chat Completeness, First-Person Guard & Move-While-Preparing Flow", async 
 
   // 7. デフォルトの思考ポーズ時間が 3 秒（3000ms）に設定されていること
   assert.equal(GAME_CONFIG.thinkingDisplayDuration, 3000);
+});
+
+test("Human Persona & Multi-Pass Dialogue Polish (推敲): believes everyone is human, rejects meta/Chinese leaks, scores naturalness, and picks best polished draft", async () => {
+  // 1. 全キャラのプロンプトが「自分も相手も街に暮らす生身の人間」設定であり、ゲーム・仮想世界メタを含まないこと
+  const chars = buildCharacters(800, 600);
+  for (const ch of chars.filter(c => !c.isPlayer)) {
+    assert.match(ch.personality, /生身の人間/);
+    assert.match(ch.compactPersonality, /生身の人間/);
+    assert.equal(/仮想世界|ゲームの中|2Dの/.test(ch.personality), false, `${ch.name} personality should not contain game-meta`);
+    assert.equal(/仮想世界|ゲームの中|2Dの/.test(ch.compactPersonality), false, `${ch.name} compactPersonality should not contain game-meta`);
+  }
+
+  // 2. 非人間・ゲームメタ表現や中国語文法漏れを拒否しつつ、日本の常用漢字（把・没）・乗算記号（×）・ロボット比喩は通すこと
+  for (const meta of [
+    "私はAIとして街を見守っているよ！",
+    "2Dの世界って本当に楽しいね！",
+    "ここはゲームの中だから安心だよ。",
+    "私はボットだから疲れないよ！",
+    "这はとてもいい木材だよ！",
+    "相手の発言：「こんにちは」 元気だよ！",
+  ]) {
+    assert.equal(HuggingFaceClient.cleanDialogueResponse(meta, "Player", "Alice"), "", `Should reject non-human/CN/leak text: ${meta}`);
+  }
+  for (const validJp of [
+    "相場の動きはしっかり把握してるよ！",
+    "日没前に木材を集めておこうかな。",
+    "🪵木材×2を🪙4で取引板に出したよ！",
+    "ロボットみたいに働いちゃったよ！",
+  ]) {
+    assert.equal(HuggingFaceClient.cleanDialogueResponse(validJp, null, "Alice"), validJp, `Should allow valid Japanese: ${validJp}`);
+  }
+
+  // 3. scoreNaturalness() が自然な話し言葉・擬態語・行動アナウンスを高評価し、翻訳調・敬語混在・重複・オウム返しを正しく減点すること
+  const naturalScore = HuggingFaceClient.scoreNaturalness(
+    "こんにちは！私は広場の相場を眺めながら、いい掘り出し物を探しているところだよ。",
+    "Alice",
+    "Player",
+    { speechTone: "casual_bright", incomingText: "こんにちは！元気？" }
+  );
+  assert.ok(naturalScore.score >= 90, `Natural speech should score >=90, got ${naturalScore.score}`);
+  assert.equal(naturalScore.issues.length, 0);
+
+  // 行動メモ "(木材を1個採集した)" がオウム返し誤検知されないこと＆自然な擬態語が減点されないこと
+  const actionScore = HuggingFaceClient.scoreNaturalness(
+    "木材を1個採集したよ！ツヤツヤの畑も気になるな。",
+    "Alice",
+    null,
+    { speechTone: "casual_bright", incomingText: "(木材を1個採集した)" }
+  );
+  assert.equal(actionScore.issues.length, 0, `Action speech should have 0 issues, got: ${actionScore.issues}`);
+  assert.equal(actionScore.score, 95);
+
+  // Bob の落ち着いた口調（「〜たな。」等）も正しく 95 点になること
+  const bobScore = HuggingFaceClient.scoreNaturalness(
+    "いい石が見つかったよ。これでまた一つ、建物の土台に近づいたな。",
+    "Bob",
+    null,
+    { speechTone: "casual_calm_male" }
+  );
+  assert.equal(bobScore.score, 95);
+
+  const stiffScore = HuggingFaceClient.scoreNaturalness(
+    "私は木材の獲得を行いました。非常に良い結果である。",
+    "Alice",
+    "Player",
+    { speechTone: "casual_bright" }
+  );
+  assert.ok(stiffScore.score < 70, `Stiff translationese should score <70, got ${stiffScore.score}`);
+  assert.ok(stiffScore.issues.some(i => i.includes("硬い書き言葉")));
+
+  const clashScore = HuggingFaceClient.scoreNaturalness(
+    "木材を集めました。次は高く売るよ！",
+    "Alice",
+    "Player",
+    { speechTone: "casual_bright" }
+  );
+  assert.ok(clashScore.issues.some(i => i.includes("敬語とタメ口")));
+
+  const clashQuestionScore = HuggingFaceClient.scoreNaturalness(
+    "元気ですか？次は木材を集めるよ！",
+    "Alice",
+    "Player",
+    { speechTone: "casual_bright" }
+  );
+  assert.ok(clashQuestionScore.issues.some(i => i.includes("敬語とタメ口")));
+
+  const repeatScore = HuggingFaceClient.scoreNaturalness(
+    "どんどん木材木材を売るよ！",
+    "Alice",
+    "Player",
+    { speechTone: "casual_bright" }
+  );
+  assert.ok(repeatScore.issues.some(i => i.includes("重複")));
+
+  const parrotScore = HuggingFaceClient.scoreNaturalness(
+    "木材を安く売ってくれないかな。",
+    "Bob",
+    "Alice",
+    { speechTone: "casual_calm_male", incomingText: "木材を安く売ってくれない？" }
+  );
+  assert.ok(parrotScore.issues.some(i => i.includes("そのまま繰り返さず")));
+
+  // 4. callAI の複数回推敲（Draft -> Polish）：硬い下書きを推敲パスで自然な話し言葉に改善して採用すること
+  const alice = chars.find(c => c.id === "alice");
+  const client = new HuggingFaceClient();
+  client.mode = "browser-hf";
+  client._workerReady = true;
+  const seenStages = [];
+  client._runBrowserWorker = async (msgs) => {
+    const u = msgs[msgs.length - 1].content;
+    if (u.includes("元のセリフ：")) {
+      seenStages.push("polish");
+      return { content: "いい木材が取れたよ！あとで取引板に出してみるね。", modelId: "mock-0.5b" };
+    }
+    seenStages.push("draft");
+    return { content: "私は木材の獲得を行いました。非常に良いと思います。", modelId: "mock-0.5b" };
+  };
+
+  const polishedResult = await client.callAI(alice, "たった今、あなたは木材を1個採集しました。", "Player", "(木材を採集)");
+  assert.deepEqual(seenStages, ["draft", "polish"]);
+  assert.equal(polishedResult, "@Player いい木材が取れたよ！あとで取引板に出してみるね。");
+
+  // 5. 非劣化保証：推敲パスが壊れた断片を返しても、有効だった下書きを安全に保持すること
+  const bob = chars.find(c => c.id === "bob");
+  const client2 = new HuggingFaceClient();
+  client2.mode = "browser-hf";
+  client2._workerReady = true;
+  let calls2 = 0;
+  client2._runBrowserWorker = async () => {
+    calls2++;
+    if (calls2 === 1) return { content: "木材を集めました。あとで売ります。", modelId: "mock-0.5b" };
+    return { content: "」に話しかけよう！", modelId: "mock-0.5b" };
+  };
+  const safeResult = await client2.callAI(bob, "たった今、あなたは木材を1個採集しました。", "Player", "(木材を採集)");
+  assert.equal(safeResult, "@Player 木材を集めました。あとで売ります。");
+
+  // 6. _buildNaturalHumanContext が表形式や記号の羅列ではなく自然な日本語文を返すこと
+  const cm = new ChatManager();
+  const rm = new ResourceManager();
+  rm.init(800, 600);
+  const brain = new AIBrain(chars, cm, client, rm);
+  brain.orderBook = new OrderBook();
+  alice.inventory.wood = 2;
+  const naturalCtx = brain._buildNaturalHumanContext(alice);
+  assert.match(naturalCtx, /木材2個/);
+  assert.equal(naturalCtx.includes("|"), false, "自然状況文にパイプ区切りの表形式を含まないこと");
 });

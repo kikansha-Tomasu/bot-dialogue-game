@@ -499,24 +499,25 @@ class FarmManager {
   }
 
   buildSummaryForAI(char) {
+    const stageLabels = ["種まき直後", "芽が出たところ", "ぐんぐん成長中", "収穫どき！"];
     const myPlots = this.getPlotsByOwner(char.id);
     const emptyCount = this.getEmptyPlots().length;
     const myStr = myPlots.length
       ? myPlots.map(p => {
           const c = CROP_CATALOG[p.cropId];
-          return `${c.emoji}${c.name}(Stage ${p.stage}/3${p.stage >= 3 ? "・収穫可能!" : ""})`;
-        }).join(", ")
+          return `${c.emoji}${c.name}（${stageLabels[p.stage] || "成長中"}）`;
+        }).join("・")
       : "なし";
 
     const rivalPlots = this.plots.filter(p => p.cropId && p.ownerId !== char.id);
     const rivalStr = rivalPlots.length
       ? rivalPlots.map(p => {
           const c = CROP_CATALOG[p.cropId];
-          return `${p.ownerName}:${c.emoji}${c.name}(Stage ${p.stage}/3)`;
-        }).join(", ")
+          return `${p.ownerName}の${c.emoji}${c.name}（${stageLabels[p.stage] || "成長中"}）`;
+        }).join("・")
       : "なし";
 
-    return `自分の農地(${myPlots.length}/${MAX_PLOTS_PER_CHAR}): ${myStr} ／ ライバルの農地: ${rivalStr} ／ 空き農地: ${emptyCount}区画`;
+    return `自分の畑(${myPlots.length}/${MAX_PLOTS_PER_CHAR}): ${myStr} ／ みんなの畑: ${rivalStr} ／ 空いている畑: ${emptyCount}区画`;
   }
 
   serialize() {
