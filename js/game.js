@@ -562,24 +562,32 @@ class Game {
     const panel = document.getElementById("victory-panel");
     if (!el || !panel) return;
 
+    const esc = (s) => String(s ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+    const safeCssColor = (c) => /^#[0-9a-fA-F]{3,8}$/.test(c || "") ? c : "#555";
     const isPlayerWin = winner.id === this.player.id;
     const medals = ["🥇", "🥈", "🥉", "4️⃣"];
     const rows = (ranked || this._getRankedCharacters()).map(({ char, asset, buildings, farms }, i) => {
       const cooked = this.farmManager.getCookedCount(char.id);
+      const charColor = safeCssColor(char.color);
       return `<div class="inv-char-card${char.id === winner.id ? " inv-player-card" : ""}">
         <div class="inv-card-top">
           <span class="inv-rank">${medals[i] || `${i + 1}.`}</span>
-          <span class="inv-char-name" style="color:${char.color}">${char.emoji} ${char.name}</span>
-          <span class="inv-building-tag">🏠${buildings} 🌾${farms} 🍳${cooked}</span>
-          <span class="inv-networth">総資産 <b>${asset.total.toFixed(1)}🪙</b></span>
+          <span class="inv-char-name" style="color:${charColor}">${esc(char.emoji)} ${esc(char.name)}</span>
+          <span class="inv-building-tag">🏠${Number(buildings) || 0} 🌾${Number(farms) || 0} 🍳${Number(cooked) || 0}</span>
+          <span class="inv-networth">総資産 <b>${(Number(asset?.total) || 0).toFixed(1)}🪙</b></span>
         </div>
       </div>`;
     }).join("");
 
     el.innerHTML = `
       <div class="victory-hero">
-        <div class="victory-winner-name">${isPlayerWin ? "🎉 あなたの優勝！" : `😤 ライバル ${winner.name} が優勝！`}</div>
-        <div class="victory-reason">${winner.emoji} ${winner.name} — ${winner.reason}</div>
+        <div class="victory-winner-name">${isPlayerWin ? "🎉 あなたの優勝！" : `😤 ライバル ${esc(winner.name)} が優勝！`}</div>
+        <div class="victory-reason">${esc(winner.emoji)} ${esc(winner.name)} — ${esc(winner.reason)}</div>
       </div>
       <div>${rows}</div>
     `;
@@ -1028,8 +1036,14 @@ class Game {
   _populateMapSelector(maps, currentId) {
     const sel = document.getElementById("map-select");
     if (!sel || !maps.length) return;
+    const esc = (s) => String(s ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
     sel.innerHTML = maps
-      .map(m => `<option value="${m.id}"${m.id === currentId ? " selected" : ""}>🗺 ${m.name}</option>`)
+      .map(m => `<option value="${esc(m.id)}"${m.id === currentId ? " selected" : ""}>🗺 ${esc(m.name)}</option>`)
       .join("");
   }
 
@@ -1404,17 +1418,24 @@ class Game {
     const pct = Math.min(100, Math.round((topTotal / VICTORY_TARGET_ASSETS) * 100));
     const medals = ["🥇", "🥈", "🥉", "4️⃣"];
 
+    const esc = (s) => String(s ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+
     const winnerBanner = this.progression.seasonWinner
       ? `<div class="victory-target-banner">
           <div class="victory-target-top">
-            <span>🏆 シーズン王者: ${this.progression.seasonWinner.emoji} ${this.progression.seasonWinner.name}</span>
-            <span>${this.progression.seasonWinner.reason}</span>
+            <span>🏆 シーズン王者: ${esc(this.progression.seasonWinner.emoji)} ${esc(this.progression.seasonWinner.name)}</span>
+            <span>${esc(this.progression.seasonWinner.reason)}</span>
           </div>
         </div>`
       : `<div class="victory-target-banner">
           <div class="victory-target-top">
             <span>🏆 優勝条件: 総資産 ${VICTORY_TARGET_ASSETS}🪙 または 街Lv.5 に最初到達</span>
-            <span>現在トップ: ${leaderName} (${topTotal.toFixed(1)}/${VICTORY_TARGET_ASSETS}🪙)</span>
+            <span>現在トップ: ${esc(leaderName)} (${topTotal.toFixed(1)}/${VICTORY_TARGET_ASSETS}🪙)</span>
           </div>
           <div class="prog-bar-track"><div class="prog-bar-fill" style="width:${pct}%"></div></div>
         </div>`;
@@ -1425,10 +1446,13 @@ class Game {
         .map(([k, v]) => {
           const emoji = RESOURCE_EMOJI[k] || "";
           const label = RESOURCE_LABEL[k] || k;
+          const safeEmoji = esc(emoji);
+          const safeLabel = esc(label);
+          const safeKey = esc(k);
           if (char.isPlayer && k !== "coin") {
-            return `<button type="button" class="inv-chip inv-sell-chip" data-sell-item="${k}" title="取引板に売り注文を出す">${emoji} ${label}×${v}</button>`;
+            return `<button type="button" class="inv-chip inv-sell-chip" data-sell-item="${safeKey}" title="取引板に売り注文を出す">${safeEmoji} ${safeLabel}×${Number(v) || 0}</button>`;
           }
-          return `<span class="inv-chip">${emoji} ${label}×${v}</span>`;
+          return `<span class="inv-chip">${safeEmoji} ${safeLabel}×${Number(v) || 0}</span>`;
         })
         .join("");
       const safeColor = /^#[0-9a-fA-F]{3,8}$/.test(char.color || "") ? char.color : "#555";
@@ -1441,26 +1465,21 @@ class Game {
         ? char.ttsConfig.ttsModel
         : "";
       const hfTag = hfModelShort
-        ? `<span class="inv-building-tag" title="Hugging Face LLM: ${char.lastUsedModel || char.model} / 音声: ${char.ttsConfig?.hfRepo || "litagin/style_bert_vits2_jvnv"} (${hfVoiceShort})">🤗 ${hfModelShort}${hfVoiceShort ? ` 🔊${hfVoiceShort}` : ""}</span>`
+        ? `<span class="inv-building-tag" title="${esc(`Hugging Face LLM: ${char.lastUsedModel || char.model} / 音声: ${char.ttsConfig?.hfRepo || "litagin/style_bert_vits2_jvnv"} (${hfVoiceShort})`)}">🤗 ${esc(hfModelShort)}${hfVoiceShort ? ` 🔊${esc(hfVoiceShort)}` : ""}</span>`
         : "";
       const gap = topTotal - asset.total;
       const gapBadge = idx === 0
         ? `<span class="inv-gap-badge is-leader">👑 トップ</span>`
         : `<span class="inv-gap-badge">1位差 -${gap.toFixed(1)}🪙</span>`;
 
-      const escapeHtml = (s) => String(s ?? "")
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;");
       const strategyRow = !char.isPlayer && char.strategy?.goal
-        ? `<div class="inv-strategy-line"><span class="strategy-style-pill">🧭 ${escapeHtml(char.strategy.styleLabel || "戦略")}</span><span class="strategy-goal-text">${escapeHtml(char.strategy.goal)}</span></div>`
+        ? `<div class="inv-strategy-line"><span class="strategy-style-pill">🧭 ${esc(char.strategy.styleLabel || "戦略")}</span><span class="strategy-goal-text">${esc(char.strategy.goal)}</span></div>`
         : "";
 
       return `<div class="inv-char-card${char.isPlayer ? " inv-player-card" : ""}">
         <div class="inv-card-top">
           <span class="inv-rank">${medals[idx] || `${idx + 1}.`}</span>
-          <span class="inv-char-name" style="color:${safeColor}">${char.emoji} ${char.name}</span>
+          <span class="inv-char-name" style="color:${safeColor}">${esc(char.emoji)} ${esc(char.name)}</span>
           ${hfTag}
           ${buildingTag}
           ${farmTag}
@@ -1535,6 +1554,14 @@ class Game {
       }
     }
 
+    const esc = (s) => String(s ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+    const safeColor = (c) => /^#[0-9a-fA-F]{3,8}$/.test(c || "") ? c : "#555";
+
     const stateKey = [...nearbySet].sort().join(",");
     if (stateKey !== this._lastNearbyIdsKey || !hintEl.childElementCount) {
       this._lastNearbyIdsKey = stateKey;
@@ -1542,8 +1569,11 @@ class Game {
         const isNear = nearbySet.has(c.id);
         const hfModel = c.lastUsedModel || c.model || GAME_CONFIG.model;
         const hfVoice = c.ttsConfig?.ttsModel || "jvnv-F1-jp";
-        return `<button type="button" class="mention-chip${isNear ? " is-nearby" : ""}" data-name="${c.name}" style="--chip-color:${c.color}" title="@${c.name} へ話しかける（HF AI: ${hfModel} / 音声: ${hfVoice}）">
-          ${isNear ? '<span class="near-dot" aria-hidden="true"></span>' : ""}${c.emoji} @${c.name}
+        const name = esc(c.name);
+        const emoji = esc(c.emoji);
+        const title = esc(`@${c.name} へ話しかける（HF AI: ${hfModel} / 音声: ${hfVoice}）`);
+        return `<button type="button" class="mention-chip${isNear ? " is-nearby" : ""}" data-name="${name}" style="--chip-color:${safeColor(c.color)}" title="${title}">
+          ${isNear ? '<span class="near-dot" aria-hidden="true"></span>' : ""}${emoji} @${name}
         </button>`;
       }).join("");
       hintEl.innerHTML = `<span class="mention-prefix">話しかける:</span>${chips}`;
