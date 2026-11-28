@@ -1258,8 +1258,12 @@ def tts():
     text = text[:500]
 
     voice = body.get("voice", "amitaro")
+    if voice not in _VALID_VOICES:
+        voice = "amitaro"
     speed = parse_tts_speed(body.get("speed", 1.0))
     style = str(body.get("style") or "")
+    if style and style not in _VALID_STYLES:
+        style = ""
 
     sbv2_ok, _ = _check_sbv2_available()
     if sbv2_ok:

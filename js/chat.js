@@ -81,9 +81,10 @@ class ChatManager {
       minute: "2-digit",
     });
 
+    const safeColor = this._sanitizeColor(msg.senderColor);
     el.innerHTML = `
       <div class="msg-header">
-        <span class="sender-name" style="color:${msg.senderColor}">${this._escapeHtml(msg.senderName)}</span>
+        <span class="sender-name" style="color:${safeColor}">${this._escapeHtml(msg.senderName)}</span>
         <span class="arrow">→</span>
         <span class="recipient-name">${this._escapeHtml(msg.recipientName)}</span>
         <span class="msg-time">${time}</span>
