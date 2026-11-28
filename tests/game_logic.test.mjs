@@ -1721,3 +1721,148 @@ test("Human Persona & Multi-Pass Dialogue Polish (推敲): believes everyone is 
   assert.match(naturalCtx, /木材2個/);
   assert.equal(naturalCtx.includes("|"), false, "自然状況文にパイプ区切りの表形式を含まないこと");
 });
+
+test("Hardening & Bugfixes (gh20): Japanese mentions, orderbook partial-fill cap, save sanitization, and worker/TTS recovery", async () => {
+  // 1. 日本語メンションの解析と解決
+  const cm = new ChatManager();
+  const chars = buildCharacters(800, 600);
+  const aiChars = chars.filter(c => !c.isPlayer);
+  assert.equal(cm.parseMention("@アリス こんにちは！"), "アリス");
+  assert.equal(cm.resolveCharacter("アリス", aiChars)?.id, "alice");
+  assert.equal(cm.resolveCharacter("ボブ", aiChars)?.id, "bob");
+  assert.equal(cm.resolveCharacter("キャロル", aiChars)?.id, "carol");
+
+  // 2. OrderBook.restoreOrder 重複拒否＆買い注文部分約定の残コイン0削除
+  const ob = new OrderBook();
+  const buyer = { id: "alice", name: "Alice", color: "#8338EC", inventory: { coin: 10, wood: 0 } };
+  const seller = { id: "bob", name: "Bob", color: "#B84700", inventory: { coin: 10, wood: 5 } };
+  assert.ok(ob.restoreOrder(buyer, "coin", 3, "wood", 2));
+  assert.equal(ob.restoreOrder(buyer, "coin", 3, "wood", 2), null, "重複注文の復元を拒否すること");
+
+  // 買い注文: 2コインで木材3個を希望。指値売り（木材2個を2コイン）と部分約定すると残コイン上限0になるため1コイン復活せず削除されること
+  const ob2 = new OrderBook();
+  const b2 = { id: "alice", name: "Alice", color: "#8338EC", inventory: { coin: 10, wood: 0 } };
+  const s2 = { id: "bob", name: "Bob", color: "#B84700", inventory: { coin: 10, wood: 5 } };
+  ob2.postOrder(s2, "wood", 2, "coin", 2); // 売り: 木材2個を2コイン（単価1.0）
+  ob2.postOrder(b2, "coin", 2, "wood", 2); // 買い: 2コインで木材2個（単価1.0）→ 全約定
+  assert.equal(ob2.orders.length, 0);
+
+  // 買い指値が残コイン上限0で部分約定するケース（売り1個=2コイン vs 買い2個=2コインだが買い側単価1.0で残コイン0）
+  const ob3 = new OrderBook();
+  const b3 = { id: "alice", name: "Alice", color: "#8338EC", inventory: { coin: 10, wood: 0 } };
+  const s3 = { id: "bob", name: "Bob", color: "#B84700", inventory: { coin: 10, wood: 5 } };
+  ob3.postOrder(s3, "wood", 1, "coin", 1); // 売り: 木材1個を1コイン（単価1.0）
+  // 買い: 1コインで木材2個は単価0.5で交差しないため、売り単価1.0に対し買い2コインで木材2個→売り1個とマッチし残1個1コイン
+  // さらに1コインで木材1個とマッチ→残0で削除
+  ob3.postOrder(b3, "coin", 2, "wood", 2);
+  assert.equal(ob3.orders.length, 1);
+  assert.equal(ob3.orders[0].sellAmount, 1);
+  assert.equal(ob3.orders[0].buyAmount, 1);
+  ob3.executeMarketSell(s3, "wood", 1);
+  assert.equal(ob3.orders.length, 0);
+
+  // 3. SaveManager.applyGameState の建物 builderName 復元・破損 tradeHistory・不正 spriteFolder のサニタイズ
+  const gameMock = {
+    canvas: { width: 800, height: 600 },
+    characters: buildCharacters(800, 600),
+    buildingManager: new BuildingManager(null),
+    orderBook: new OrderBook(),
+    progression: null,
+    farmManager: new FarmManager(),
+  };
+  gameMock.farmManager.initForMap("central_plaza", false);
+  const alice = gameMock.characters.find(c => c.id === "alice");
+  SaveManager.applyGameState(gameMock, {
+    characters: [
+      {
+        id: "alice",
+        fx: -5,
+        fy: 99,
+        spriteFolder: "https://evil.example/xss",
+        conversationHistory: [
+          { role: "user", content: "ok" },
+          { role: "hacker", content: "drop" },
+          null,
+        ],
+      },
+    ],
+    buildings: [
+      { type: "campfire", fx: 2.5, fy: -1, builderId: "alice", builderColor: "javascript:alert(1)" },
+    ],
+    orderBook: {
+      tradeHistory: [
+        { resourceType: "wood", coinQty: 4, resourceQty: 2, unitPrice: 2.0, buyerName: "Alice", sellerName: "Bob", time: Date.now() },
+        { resourceType: "wood", coinQty: 4, resourceQty: 2, unitPrice: "NaN-corrupt" },
+        { resourceType: "unknown_item", coinQty: 1, resourceQty: 1, unitPrice: 1 },
+      ],
+    },
+    farming: {
+      plots: [
+        { index: 0, ownerId: "ghost_hacker", ownerName: "<img src=x>", ownerColor: "red;background:url(x)", cropId: "carrot", stage: 1, stageTimer: 5 },
+      ],
+    },
+  });
+  assert.equal(alice.spriteFolder, "characters/base_01", "許可リスト外の spriteFolder は拒否されること");
+  assert.ok(alice.x >= 16 && alice.x <= 784 && alice.y >= 12 && alice.y <= 588, "キャラ座標が安全範囲にクランプされること");
+  assert.equal(alice.conversationHistory.length, 1, "不正ロールの会話履歴が除外されること");
+  assert.equal(gameMock.buildingManager.placed[0].builderName, "Alice", "建物の builderName が復元されること");
+  assert.equal(gameMock.buildingManager.placed[0].builderColor, "#8338EC", "不正な builderColor が安全な色に正規化されること");
+  assert.equal(gameMock.orderBook.tradeHistory.length, 1, "破損した tradeHistory が除外されること");
+  assert.equal(gameMock.farmManager.plots[0].cropId, null, "存在しない ownerId の農地データが破棄されること");
+
+  // 4. AIBrain._aiDoMasterAction は orderBook=null や例外時でも isProcessing を解放する
+  const rm = new ResourceManager();
+  rm.init(800, 600);
+  const badApi = {
+    callAIForStrategy: async () => null,
+    callAIForMasterAction: async () => { throw new Error("boom"); },
+    lmAvailable: false,
+  };
+  const brain = new AIBrain(chars, cm, badApi, rm);
+  brain.orderBook = null;
+  const aliceChar = chars.find(c => c.id === "alice");
+  await brain._aiDoMasterAction(aliceChar);
+  assert.equal(brain.isProcessing[aliceChar.id], false, "例外発生後も isProcessing が解放されること");
+
+  // 5. Worker onerror 後に _workerReady / browserTtsReady がリセットされること
+  const { TTSManager } = require(path.join(rootDir, "js/tts.js"));
+  const prevWorker = globalThis.Worker;
+  globalThis.Worker = class MockWorker {
+    constructor() { this.onerror = null; this.onmessage = null; }
+    postMessage() {}
+    terminate() {}
+  };
+  try {
+    const api2 = new HuggingFaceClient();
+    api2.mode = "browser-hf";
+    api2._initBrowserWorker();
+    api2._workerReady = true;
+    api2._workerLoading = false;
+    api2._worker.onerror({ message: "crash" });
+    assert.equal(api2._workerReady, false, "LLM Worker クラッシュ後に _workerReady が false へリセットされること");
+    assert.equal(api2._worker, null);
+
+    const tts = new TTSManager();
+    tts._isLocalHost = false;
+    tts._initBrowserTtsWorker();
+    tts.browserTtsReady = true;
+    tts.browserTtsLoading = false;
+    tts._ttsWorker.onerror({ message: "tts crash" });
+    assert.equal(tts.browserTtsReady, false, "TTS Worker クラッシュ後に browserTtsReady が false へリセットされること");
+    assert.equal(tts._ttsWorker, null);
+  } finally {
+    globalThis.Worker = prevWorker;
+  }
+
+  // 6. TTSManager.stop() で _abortPlay が呼ばれて再生 Promise が解放されること
+  const tts2 = new TTSManager();
+  let aborted = false;
+  tts2._activeItem = {
+    cancelled: false,
+    started: false,
+    ended: false,
+    _abortPlay: () => { aborted = true; },
+  };
+  tts2.stop();
+  assert.equal(aborted, true, "stop() 時に再生待機 Promise の中断コールバックが呼ばれること");
+});

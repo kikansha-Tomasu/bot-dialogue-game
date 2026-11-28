@@ -18,6 +18,11 @@ class Game {
     this._loopErrorCount = 0;
     this._lastLoopError = null;
     this._errorBannerHideTimer = null;
+    this._flashInputTimer = null;
+    this._modalTriggerEl = null;
+    this._syncingOrderBook = false;
+    this._rankedCache = null;
+    this._rankedDirty = true;
     // サブシステム別のサーキットブレーカー状態
     this._subsystemFailures = {};  // { label: { count, lastFail, disabledUntil } }
     this._circuitBreakerThreshold = 5;  // 連続失敗回数の閾値
@@ -48,6 +53,16 @@ class Game {
     this.orderBook = new OrderBook();
 
     const syncLivePanels = () => {
+      this._rankedDirty = true;
+      if (!this._syncingOrderBook && this.orderBook) {
+        this._syncingOrderBook = true;
+        try {
+          if (this.orderBook.isOpen) this.orderBook.refresh();
+          else this.orderBook.pruneInvalidOrders();
+        } finally {
+          this._syncingOrderBook = false;
+        }
+      }
       if (this._isInventoryOpen()) this._renderInventoryPanel();
       if (this.buildingManager.isMenuOpen) this.buildingManager.refreshPanel();
       if (this.progression.isOpen) this._renderProgressionPanel();
@@ -214,6 +229,7 @@ class Game {
 
     this.navGrid.buildFromMap(mapData, atlasAssets, this.canvas.width, this.canvas.height, 2);
     this.resourceManager.snapToWalkable(this.navGrid);
+    this.buildingManager.snapToWalkable(this.navGrid, this.canvas.width, this.canvas.height);
 
     // キャラクターが障害物上に重なっている場合は最寄りの通行可能位置へ安全退避
     this.characters.forEach(c => {
@@ -267,8 +283,53 @@ class Game {
         this.resourceManager.scalePositions(oldW, oldH, newW, newH);
         this.buildingManager.scalePositions(oldW, oldH, newW, newH);
         this.navGrid.rebuildForSize(newW, newH);
+        this.buildingManager.setBounds(newW, newH, this.navGrid);
       }
     });
+  }
+
+  _getActiveModalEl() {
+    const ids = ["victory-panel", "progression-panel", "orderbook-panel", "inventory-panel", "build-panel"];
+    for (const id of ids) {
+      const el = document.getElementById(id);
+      if (el && !el.classList.contains("hidden")) return el;
+    }
+    return null;
+  }
+
+  _hasOpenModal() {
+    return Boolean(this._getActiveModalEl());
+  }
+
+  _syncModalBackdrop() {
+    const backdrop = document.getElementById("modal-backdrop");
+    if (!backdrop) return;
+    const active = this._getActiveModalEl();
+    backdrop.classList.toggle("hidden", !active);
+    if (active) this.keysHeld.clear();
+  }
+
+  _focusModal(panelEl) {
+    if (!panelEl) return;
+    if (!this._modalTriggerEl && document.activeElement instanceof HTMLElement && !panelEl.contains(document.activeElement)) {
+      this._modalTriggerEl = document.activeElement;
+    }
+    if (panelEl.contains(document.activeElement)) return;
+    const focusable = panelEl.querySelector(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    );
+    if (focusable instanceof HTMLElement) {
+      focusable.focus();
+    }
+  }
+
+  _restoreModalFocus() {
+    if (this._hasOpenModal()) return;
+    const prev = this._modalTriggerEl;
+    this._modalTriggerEl = null;
+    if (prev && prev.isConnected && typeof prev.focus === "function") {
+      prev.focus();
+    }
   }
 
   _closeAllPanels(except = null) {
@@ -285,12 +346,47 @@ class Game {
       this._closeProgressionPanel();
     }
     if (except !== "victory") {
-      document.getElementById("victory-panel")?.classList.add("hidden");
+      const vp = document.getElementById("victory-panel");
+      if (vp && !vp.classList.contains("hidden")) {
+        vp.classList.add("hidden");
+        if (this.progression.seasonWinner && !this.progression.victoryModalDismissed) {
+          this.progression.victoryModalDismissed = true;
+          this._scheduleSave();
+        }
+      }
     }
+    this._syncModalBackdrop();
+    if (!except) this._restoreModalFocus();
   }
 
   _setupInput() {
+    document.getElementById("modal-backdrop")?.addEventListener("click", () => {
+      this._closeAllPanels();
+    });
+
     window.addEventListener("keydown", e => {
+      // モーダル表示中の Tab フォーカストラップ（WCAG 2.4.3）
+      if (e.key === "Tab") {
+        const activeModal = this._getActiveModalEl();
+        if (activeModal) {
+          const focusables = [...activeModal.querySelectorAll(
+            'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+          )].filter(el => el.offsetParent !== null);
+          if (focusables.length > 0) {
+            const first = focusables[0];
+            const last = focusables[focusables.length - 1];
+            if (e.shiftKey && (document.activeElement === first || !activeModal.contains(document.activeElement))) {
+              e.preventDefault();
+              last.focus();
+            } else if (!e.shiftKey && (document.activeElement === last || !activeModal.contains(document.activeElement))) {
+              e.preventDefault();
+              first.focus();
+            }
+          }
+          return;
+        }
+      }
+
       if (e.key === "Escape") {
         const hfOv = document.getElementById("hf-loader-overlay");
         if (hfOv && !hfOv.classList.contains("hidden")) {
@@ -309,12 +405,15 @@ class Game {
       if (this._isTypingInForm(e)) return;
 
       const key = e.key.toLowerCase();
-      this.keysHeld.add(key);
 
-      if (key === "w" || key === "a" || key === "s" || key === "d" || key.startsWith("arrow")) {
-        if (!this._hfBannerDismissed && this.apiClient?.mode === "browser-hf" && !this.apiClient._workerReady) {
-          this._hfBannerDismissed = true;
-          document.getElementById("hf-loader-overlay")?.classList.add("hidden");
+      // モーダル表示中は背景移動・採集キーを無効化し、パネル切替ショートカットのみ許可
+      if (!this._hasOpenModal()) {
+        this.keysHeld.add(key);
+        if (key === "w" || key === "a" || key === "s" || key === "d" || key.startsWith("arrow")) {
+          if (!this._hfBannerDismissed && this.apiClient?.mode === "browser-hf" && !this.apiClient._workerReady) {
+            this._hfBannerDismissed = true;
+            document.getElementById("hf-loader-overlay")?.classList.add("hidden");
+          }
         }
       }
 
@@ -378,25 +477,37 @@ class Game {
     const willOpen = !this.buildingManager.isMenuOpen;
     if (willOpen) this._closeAllPanels("build");
     this.buildingManager.toggleMenu();
+    this._syncModalBackdrop();
+    if (willOpen) this._focusModal(document.getElementById("build-panel"));
+    else this._restoreModalFocus();
   }
 
   _toggleOrderBook() {
     if (this.orderBook.isOpen) {
       this.orderBook.close();
+      this._syncModalBackdrop();
+      this._restoreModalFocus();
     } else {
       this._closeAllPanels("orderbook");
       this.orderBook.open(this.player);
+      this._syncModalBackdrop();
+      this._focusModal(document.getElementById("orderbook-panel"));
     }
   }
 
   _toggleProgressionPanel() {
     if (this.progression.isOpen) {
       this._closeProgressionPanel();
+      this._syncModalBackdrop();
+      this._restoreModalFocus();
     } else {
       this._closeAllPanels("progression");
       this.progression.isOpen = true;
       this._renderProgressionPanel();
-      document.getElementById("progression-panel")?.classList.remove("hidden");
+      const panel = document.getElementById("progression-panel");
+      panel?.classList.remove("hidden");
+      this._syncModalBackdrop();
+      this._focusModal(panel);
     }
   }
 
@@ -408,6 +519,8 @@ class Game {
   _setupProgressionUI() {
     document.getElementById("progression-close")?.addEventListener("click", () => {
       this._closeProgressionPanel();
+      this._syncModalBackdrop();
+      this._restoreModalFocus();
     });
 
     document.querySelectorAll(".prog-tab-btn").forEach(btn => {
@@ -429,6 +542,8 @@ class Game {
         const itemType = sellBtn.dataset.sellItem;
         this._closeAllPanels("orderbook");
         this.orderBook.openForSell(this.player, itemType);
+        this._syncModalBackdrop();
+        this._focusModal(document.getElementById("orderbook-panel"));
         return;
       }
 
@@ -537,19 +652,26 @@ class Game {
       if (!sellBtn) return;
       this._closeAllPanels("orderbook");
       this.orderBook.openForSell(this.player, sellBtn.dataset.sellItem);
+      this._syncModalBackdrop();
+      this._focusModal(document.getElementById("orderbook-panel"));
     });
 
     document.getElementById("victory-close")?.addEventListener("click", () => {
       this.progression.victoryModalDismissed = true;
       document.getElementById("victory-panel")?.classList.add("hidden");
+      this._syncModalBackdrop();
+      this._restoreModalFocus();
       this._scheduleSave();
     });
     document.getElementById("btn-victory-continue")?.addEventListener("click", () => {
       this.progression.victoryModalDismissed = true;
       document.getElementById("victory-panel")?.classList.add("hidden");
+      this._syncModalBackdrop();
+      this._restoreModalFocus();
       this._scheduleSave();
     });
     document.getElementById("btn-victory-reset")?.addEventListener("click", () => {
+      if (!window.confirm("セーブデータを初期化して新シーズンを始めますか？")) return;
       this._skipUnloadSave = true;
       this.saveManager.clear();
       window.location.reload();
@@ -592,6 +714,8 @@ class Game {
       <div>${rows}</div>
     `;
     panel.classList.remove("hidden");
+    this._syncModalBackdrop();
+    this._focusModal(panel);
   }
 
   _showProgressionStatus(msg, ok) {
@@ -682,25 +806,34 @@ class Game {
     }
 
     if (tab === "farming") {
+      const esc = (s) => String(s ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+      const safeCssColor = (c) => (typeof c === "string" && /^#[0-9a-fA-F]{3,8}$/.test(c.trim()) ? c.trim() : "#555");
       const myPlots = this.farmManager.getPlotsByOwner(this.player.id);
       const ripeCount = this.farmManager.getRipePlotsByOwner(this.player.id).length;
       const emptyCount = this.farmManager.getEmptyPlots().length;
       const townLv = this.progression.townLevel;
       const harvestBonus = this.progression.getFarmHarvestBonus(this.player.id);
+      const farmSpeedMult = Math.max(0.1, this.progression.getFarmSpeedMultiplier(this.player.id) || 1.0);
 
       const myPlotsHtml = myPlots.length > 0
         ? `<div class="farm-my-plots">` + myPlots.map(p => {
             const crop = CROP_CATALOG[p.cropId];
             const isRipe = p.stage >= 3;
             const stageNames = ["種まき (Stage 0/3)", "発芽 (Stage 1/3)", "成長中 (Stage 2/3)", "✨ 収穫可能！ (Stage 3/3)"];
-            return `<div class="farm-plot-card${isRipe ? " is-ripe" : ""}">
+            const remSec = Math.max(1, Math.ceil(p.stageTimer / farmSpeedMult));
+            return `<div class="farm-plot-card${isRipe ? " is-ripe" : ""}" data-plot-stage="${p.stage}">
               <img class="farm-plot-thumb" src="map-assets/assets/progression_layers/crops/${crop.id}_stage_${p.stage}.png" alt="${crop.name}">
               <div class="farm-plot-info">
                 <div class="farm-plot-title">${crop.emoji} ${crop.name}</div>
                 <div class="farm-plot-stage">${stageNames[p.stage]}</div>
               </div>
-              <button type="button" class="prog-action-btn${isRipe ? " is-ready" : ""}" data-harvest-plot="${p.id}" ${isRipe ? "" : "disabled"}>
-                ${isRipe ? "収穫" : `${Math.ceil(p.stageTimer)}秒`}
+              <button type="button" class="prog-action-btn${isRipe ? " is-ready" : ""}" data-harvest-plot="${p.id}" data-plot-timer="${p.id}" ${isRipe ? "" : "disabled"}>
+                ${isRipe ? "収穫" : `${remSec}秒`}
               </button>
             </div>`;
           }).join("") + `</div>`
@@ -718,7 +851,7 @@ class Game {
       const rivalHtml = rivalPlots.length > 0
         ? rivalPlots.map(p => {
             const c = CROP_CATALOG[p.cropId];
-            return `<span class="rival-farm-chip" style="border-color:${p.ownerColor}">${p.ownerName}: ${c.emoji}${c.name} (Stage ${p.stage}/3)</span>`;
+            return `<span class="rival-farm-chip" style="border-color:${safeCssColor(p.ownerColor)}">${esc(p.ownerName)}: ${c.emoji}${c.name} (Stage ${p.stage}/3)</span>`;
           }).join("")
         : `<span>まだライバルの畑はありません</span>`;
 
@@ -738,13 +871,14 @@ class Game {
               : emptyCount === 0
                 ? "空き農地なし"
                 : "資源不足";
+        const totalGrowSec = Math.max(3, Math.round((crop.stageTime * 3) / farmSpeedMult));
 
         return `<div class="crop-card${unlocked ? "" : " is-locked"}">
           <div class="crop-card-top">
             <img class="crop-thumb" src="map-assets/assets/progression_layers/crops/${crop.id}_stage_3.png" alt="${crop.name}">
             <div class="crop-title-wrap">
               <div class="crop-name">${crop.emoji} ${crop.name}</div>
-              <div class="crop-time">成長: 約${crop.stageTime * 3}秒（3段階）</div>
+              <div class="crop-time">成長: 約${totalGrowSec}秒（3段階）</div>
             </div>
           </div>
           <div class="crop-reward">収穫: ${crop.emoji}×${yieldQty}${bonusStr}</div>
@@ -950,17 +1084,17 @@ class Game {
 
     if (ttsBtn && typeof ttsManager !== "undefined" && ttsManager) {
       ttsManager.onStateChange = syncTtsBtn;
-      ttsBtn.addEventListener("click", () => {
+      ttsBtn.addEventListener("click", (e) => {
         ttsManager.unlockAudio(true);
         ttsManager.toggle();
         syncTtsBtn();
-        ttsBtn.blur();
+        if (e.detail > 0) ttsBtn.blur();
       });
       syncTtsBtn();
     }
 
     document.getElementById("status-pill")?.addEventListener("click", e => {
-      e.currentTarget.blur();
+      if (e.detail > 0) e.currentTarget.blur();
       if (this.apiClient.mode === "browser-hf") {
         this._hfBannerDismissed = false;
         this._updateHfLoaderBanner();
@@ -971,7 +1105,7 @@ class Game {
       }
     });
     document.getElementById("hf-loader-close")?.addEventListener("click", e => {
-      e.currentTarget.blur();
+      if (e.detail > 0) e.currentTarget.blur();
       if (typeof ttsManager !== "undefined" && ttsManager) {
         if (!ttsManager.enabled) ttsManager.setEnabled(true);
         ttsManager.unlockAudio(true);
@@ -988,26 +1122,34 @@ class Game {
       }
     });
     document.getElementById("hf-loader-retry")?.addEventListener("click", e => {
-      e.currentTarget.blur();
+      if (e.detail > 0) e.currentTarget.blur();
       this._hfBannerDismissed = false;
       this.apiClient._initBrowserWorker();
       this._updateStatusPill();
     });
-    document.getElementById("chat-hf-loader")?.addEventListener("click", () => {
+    const triggerChatHfLoader = () => {
       if (this.apiClient.mode !== "browser-hf") return;
       this._hfBannerDismissed = false;
       if (!this.apiClient._workerReady && !this.apiClient._workerLoading) {
         this.apiClient._initBrowserWorker();
       }
       this._updateStatusPill();
+    };
+    const chatHfLoaderEl = document.getElementById("chat-hf-loader");
+    chatHfLoaderEl?.addEventListener("click", triggerChatHfLoader);
+    chatHfLoaderEl?.addEventListener("keydown", e => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        triggerChatHfLoader();
+      }
     });
     document.getElementById("town-badge")?.addEventListener("click", e => {
-      e.currentTarget.blur();
+      if (e.detail > 0) e.currentTarget.blur();
       this._toggleProgressionPanel();
     });
 
     document.getElementById("btn-reset-save")?.addEventListener("click", e => {
-      e.currentTarget.blur();
+      if (e.detail > 0) e.currentTarget.blur();
       if (!window.confirm("セーブデータを削除して最初から始めますか？")) return;
       this._skipUnloadSave = true;
       this.saveManager.clear();
@@ -1313,9 +1455,17 @@ class Game {
     document.getElementById("btn-orderbook")?.addEventListener("click", () => this._toggleOrderBook());
     document.getElementById("inventory-close")?.addEventListener("click", () => {
       document.getElementById("inventory-panel")?.classList.add("hidden");
+      this._syncModalBackdrop();
+      this._restoreModalFocus();
     });
     document.getElementById("build-close")?.addEventListener("click", () => {
       this.buildingManager.closeMenu();
+      this._syncModalBackdrop();
+      this._restoreModalFocus();
+    });
+    document.getElementById("orderbook-close")?.addEventListener("click", () => {
+      this._syncModalBackdrop();
+      this._restoreModalFocus();
     });
 
     sendBtn?.addEventListener("click", () => this._sendPlayerMessage());
@@ -1330,7 +1480,7 @@ class Game {
       const chip = e.target.closest("[data-name]");
       if (!chip) return;
       const name = chip.dataset.name;
-      const body = input.value.replace(/^[@＠][A-Za-z0-9_]+[\s、,:：]*/, "");
+      const body = input.value.replace(/^[@＠](?:[A-Za-z0-9_]+|アリス|ボブ|キャロル|プレイヤー)(?:さん|くん|君|ちゃん|様)?[\s、,:：]*/, "");
       input.value = `@${name} ${body}`;
       input.focus();
     });
@@ -1355,10 +1505,13 @@ class Game {
 
     const msgBody = this.chatManager._stripMention(text);
     if (!msgBody) {
-      input.value = "";
+      input.value = `@${target.name} `;
+      input.focus();
       this._flashInput(`@${target.name} の後にメッセージを入力してください`);
       return;
     }
+
+    this._clearFlashInput();
 
     this.chatManager.addMessage({
       senderId: this.player.id,
@@ -1386,11 +1539,15 @@ class Game {
     if (!panel) return;
     if (!panel.classList.contains("hidden")) {
       panel.classList.add("hidden");
+      this._syncModalBackdrop();
+      this._restoreModalFocus();
       return;
     }
     this._closeAllPanels("inventory");
     this._renderInventoryPanel();
     panel.classList.remove("hidden");
+    this._syncModalBackdrop();
+    this._focusModal(panel);
   }
 
   _getRankedCharacters() {
@@ -1492,15 +1649,32 @@ class Game {
     }).join("");
   }
 
+  _clearFlashInput() {
+    clearTimeout(this._flashInputTimer);
+    this._flashInputTimer = null;
+    const input = document.getElementById("chat-input");
+    if (input) input.style.borderColor = "";
+    const errEl = document.getElementById("chat-input-error");
+    if (errEl) {
+      errEl.textContent = "";
+      errEl.classList.add("hidden");
+    }
+  }
+
   _flashInput(msg) {
     const input = document.getElementById("chat-input");
-    if (!input) return;
-    input.placeholder = msg;
-    input.style.borderColor = "#B71C1C";
-    setTimeout(() => {
-      input.placeholder = "@名前 メッセージ...";
-      input.style.borderColor = "";
-    }, 2800);
+    const errEl = document.getElementById("chat-input-error");
+    if (input) input.style.borderColor = "#B71C1C";
+    if (errEl) {
+      errEl.textContent = `⚠ ${msg}`;
+      errEl.classList.remove("hidden");
+    } else if (input) {
+      input.placeholder = msg;
+    }
+    clearTimeout(this._flashInputTimer);
+    this._flashInputTimer = setTimeout(() => {
+      this._clearFlashInput();
+    }, 3200);
   }
 
   _updatePlayerMovement(dt) {
@@ -1579,10 +1753,9 @@ class Game {
       hintEl.innerHTML = `<span class="mention-prefix">話しかける:</span>${chips}`;
     }
 
-    if (closest && !input.value && input !== document.activeElement) {
-      input.placeholder = `@${closest.name} メッセージ...`;
-    } else if (!closest && !input.value && input !== document.activeElement) {
-      input.placeholder = "@名前 メッセージ...";
+    if (!input.value && input !== document.activeElement) {
+      const nextPh = closest ? `@${closest.name} メッセージ...` : "@名前 メッセージ...";
+      if (input.placeholder !== nextPh) input.placeholder = nextPh;
     }
   }
 
@@ -1593,6 +1766,13 @@ class Game {
   _updateGatherButtonState() {
     const btn = document.getElementById("btn-gather");
     if (!btn) return;
+    if (this.gatherCooldown > 0) {
+      if (this._lastGatherReady !== false) {
+        this._lastGatherReady = false;
+        btn.classList.toggle("can-gather", false);
+      }
+      return;
+    }
     const radius = this._getEffectiveGatherRadius();
     const nearbyNodes = this.resourceManager.getNearby(this.player.x, this.player.y, radius);
     const map = this.mapRenderer.getCurrentMapData();
@@ -1730,7 +1910,16 @@ class Game {
     this._safeUpdate("proximityHint", () => this._updateProximityHint());
     this._safeUpdate("gatherButton", () => this._updateGatherButtonState());
 
-    // 開いているパネルの定期同期
+    // ランキング更新＆シーズン優勝判定（描画ではなく更新フェーズで実施）
+    this._safeUpdate("seasonVictory", () => {
+      if (this._rankedDirty || !this._rankedCache) {
+        this._rankedCache = this._getRankedCharacters();
+        this._rankedDirty = false;
+      }
+      this.progression.checkSeasonVictory(this._rankedCache);
+    });
+
+    // 開いているパネルの定期同期（農業タブはタイマー表示のみ部分更新してフォーカス飛びを防止）
     this._safeUpdate("panelSync", () => {
       if (this._isInventoryOpen() || this.progression.isOpen) {
         this._inventoryRefreshTimer += dt;
@@ -1738,7 +1927,23 @@ class Game {
           this._inventoryRefreshTimer = 0;
           if (this._isInventoryOpen()) this._renderInventoryPanel();
           if (this.progression.isOpen && this.progression._activeTab === "farming") {
-            this._renderProgressionPanel();
+            const farmSpeedMult = Math.max(0.1, this.progression.getFarmSpeedMultiplier(this.player.id) || 1.0);
+            const myPlots = this.farmManager.getPlotsByOwner(this.player.id);
+            let needFullRender = document.querySelectorAll("[data-plot-timer]").length !== myPlots.length;
+            if (!needFullRender) {
+              for (const p of myPlots) {
+                const btn = document.querySelector(`[data-plot-timer="${p.id}"]`);
+                const card = btn?.closest(".farm-plot-card");
+                if (!btn || !card || Number(card.dataset.plotStage) !== p.stage) {
+                  needFullRender = true;
+                  break;
+                }
+                if (p.stage < 3) {
+                  btn.textContent = `${Math.max(1, Math.ceil(p.stageTimer / farmSpeedMult))}秒`;
+                }
+              }
+            }
+            if (needFullRender) this._renderProgressionPanel();
           }
         }
       }
@@ -1758,13 +1963,11 @@ class Game {
     const now = Date.now();
     const state = this._subsystemFailures[label] || { count: 0, lastFail: 0, disabledUntil: 0 };
 
-    // サーキットブレーカー: 無効化期間中はスキップし、復旧を試みる
+    // サーキットブレーカー: 無効化期間中はスキップし、期間経過後に自動復旧を試みる
     if (state.disabledUntil > now) {
-      // クールダウン期間中はスキップ（ただし10秒ごとに復旧を試みる）
-      if (now - state.lastFail < this._circuitBreakerCooldown) {
-        return;
-      }
-      // クールダウン経過 → 復旧を試みる
+      return;
+    }
+    if (state.disabledUntil > 0 && state.disabledUntil <= now) {
       state.disabledUntil = 0;
       state.count = 0;
     }
@@ -1924,8 +2127,7 @@ class Game {
     const sortedChars = [...this.characters].sort((a, b) => a.y - b.y);
     sortedChars.forEach(c => c.draw(ctx, w));
 
-    const ranked = this._getRankedCharacters();
-    this.progression.checkSeasonVictory(ranked);
+    const ranked = this._rankedCache || this._getRankedCharacters();
     const myRankIdx = ranked.findIndex(r => r.char.id === this.player.id);
     const rankInfo = myRankIdx >= 0
       ? { rank: myRankIdx + 1, total: ranked[myRankIdx].asset.total }
@@ -1934,16 +2136,18 @@ class Game {
 
     if (this.buildingManager.pendingType) {
       const r = BUILDING_RECIPES[this.buildingManager.pendingType];
+      const bannerY = 50;
+      const bannerH = 34;
       ctx.save();
-      ctx.fillStyle = "rgba(20, 15, 8, 0.78)";
-      ctx.fillRect(0, 0, w, 40);
+      ctx.fillStyle = "rgba(20, 15, 8, 0.84)";
+      ctx.fillRect(0, bannerY, w, bannerH);
       ctx.fillStyle = "#FFD700";
       ctx.font = "bold 13px 'Segoe UI', 'Meiryo', sans-serif";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillText(
         `${r.emoji} ${r.name} を設置 — マップをクリック  |  Esc または B で取消`,
-        w / 2, 20
+        w / 2, bannerY + bannerH / 2
       );
       ctx.restore();
     }

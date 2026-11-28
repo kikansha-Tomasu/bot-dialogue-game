@@ -104,6 +104,7 @@ class SaveManager {
         fx: Math.max(0.02, Math.min(0.98, b.x / w)),
         fy: Math.max(0.02, Math.min(0.98, b.y / h)),
         builderId: b.builderId,
+        builderName: b.builderName || null,
         builderColor: b.builderColor,
         generateTimer: b.generateTimer,
       })),
@@ -128,6 +129,15 @@ class SaveManager {
     const w = Math.max(1, game.canvas?.width || 800);
     const h = Math.max(1, game.canvas?.height || 600);
 
+    const allowedFolders = new Set(["characters/base_01", "characters/base_02", "characters/base_03", "characters/base_04"]);
+    if (typeof AVATAR_CATALOG !== "undefined" && Array.isArray(AVATAR_CATALOG)) {
+      AVATAR_CATALOG.forEach(a => { if (a?.folder) allowedFolders.add(a.folder); });
+    }
+    if (typeof AI_CHARACTERS_CONFIG !== "undefined" && Array.isArray(AI_CHARACTERS_CONFIG)) {
+      AI_CHARACTERS_CONFIG.forEach(a => { if (a?.spriteFolder) allowedFolders.add(a.spriteFolder); });
+    }
+    const safeColor = (c, fallback) => (typeof c === "string" && /^#[0-9a-fA-F]{3,8}$/.test(c.trim()) ? c.trim() : fallback);
+
     // キャラクター在庫・位置・アバター・会話履歴復元
     const allItemKeys = typeof TRADABLE_ITEM_TYPES !== "undefined"
       ? ["coin", ...TRADABLE_ITEM_TYPES]
@@ -144,14 +154,23 @@ class SaveManager {
           }
         }
         if (Number.isFinite(sc.fx) && Number.isFinite(sc.fy)) {
-          target.x = sc.fx * w;
-          target.y = sc.fy * h;
+          const clampedFx = Math.max(0.02, Math.min(0.98, sc.fx));
+          const clampedFy = Math.max(0.02, Math.min(0.98, sc.fy));
+          target.x = clampedFx * w;
+          target.y = clampedFy * h;
         }
-        if (typeof sc.spriteFolder === "string" && sc.spriteFolder !== target.spriteFolder) {
+        if (
+          typeof sc.spriteFolder === "string" &&
+          allowedFolders.has(sc.spriteFolder) &&
+          sc.spriteFolder !== target.spriteFolder
+        ) {
           target.setSpriteFolder?.(sc.spriteFolder);
         }
         if (Array.isArray(sc.conversationHistory)) {
-          target.conversationHistory = sc.conversationHistory.slice(-10);
+          target.conversationHistory = sc.conversationHistory
+            .filter(m => m && typeof m === "object" && (m.role === "user" || m.role === "assistant") && typeof m.content === "string")
+            .map(m => ({ role: m.role, content: m.content.slice(0, 300) }))
+            .slice(-10);
         }
         if (sc.strategy && typeof sc.strategy === "object" && !target.isPlayer) {
           const validFocus = ["gather", "farm", "trade", "build", "chat"];
@@ -181,14 +200,18 @@ class SaveManager {
         const benefit = BUILDING_BENEFITS[sb.type];
         if (!recipe) continue;
         const interval = benefit?.interval || 999;
+        const ownerChar = (game.characters || []).find(c => c.id === sb.builderId);
+        const fx = Number.isFinite(Number(sb.fx)) ? Math.max(0.02, Math.min(0.98, Number(sb.fx))) : 0.5;
+        const fy = Number.isFinite(Number(sb.fy)) ? Math.max(0.02, Math.min(0.98, Number(sb.fy))) : 0.5;
         game.buildingManager.placed.push({
           type: sb.type,
-          x: (Number(sb.fx) || 0.5) * w,
-          y: (Number(sb.fy) || 0.5) * h,
+          x: fx * w,
+          y: fy * h,
           emoji: recipe.emoji,
           name: recipe.name,
-          builderId: sb.builderId || "player",
-          builderColor: sb.builderColor || "#FFD700",
+          builderId: ownerChar?.id || sb.builderId || "player",
+          builderName: ownerChar?.name || (typeof sb.builderName === "string" && sb.builderName.trim() ? sb.builderName.trim().slice(0, 24) : (sb.builderId === "player" ? "Player" : sb.builderId || "Player")),
+          builderColor: safeColor(ownerChar?.color || sb.builderColor, "#FFD700"),
           interval,
           generateTimer: Number.isFinite(sb.generateTimer) ? Math.max(1, Math.min(interval, sb.generateTimer)) : interval,
           flashTimer: 0,
@@ -214,7 +237,27 @@ class SaveManager {
         }
       }
       if (Array.isArray(saved.orderBook.tradeHistory)) {
-        game.orderBook.tradeHistory = saved.orderBook.tradeHistory.slice(-25);
+        const tradableSet = new Set(tradableKeys);
+        game.orderBook.tradeHistory = saved.orderBook.tradeHistory
+          .filter(t => {
+            if (!t || typeof t !== "object" || !tradableSet.has(t.resourceType)) return false;
+            const qty = Number(t.resourceQty ?? t.resQty);
+            return (
+              Number.isFinite(Number(t.unitPrice)) && Number(t.unitPrice) > 0 &&
+              Number.isFinite(Number(t.coinQty)) && Number(t.coinQty) > 0 &&
+              Number.isFinite(qty) && qty > 0
+            );
+          })
+          .map(t => ({
+            time: Number.isFinite(Number(t.time)) ? Number(t.time) : Date.now(),
+            resourceType: t.resourceType,
+            resourceQty: Math.floor(Number(t.resourceQty ?? t.resQty)),
+            coinQty: Math.floor(Number(t.coinQty)),
+            unitPrice: Number(t.unitPrice),
+            buyerName: typeof t.buyerName === "string" ? t.buyerName.slice(0, 32) : "",
+            sellerName: typeof t.sellerName === "string" ? t.sellerName.slice(0, 32) : "",
+          }))
+          .slice(-25);
       }
       if (Array.isArray(saved.orderBook.orders)) {
         game.orderBook.orders = [];

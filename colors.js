@@ -15,7 +15,7 @@ const PALETTE = [
   "#4A5C2E", // 9  ダークオリーブ（ヘッダー）
   "#3D7A24", // 10 木の葉（中）
   "#8338EC", // 11 バイオレット（Alice）
-  "#E8620A", // 12 温かみオレンジ（Bob）
+  "#B84700", // 12 温かみオレンジ（Bob・WCAG AA コントラスト確保）
   "#D4187A", // 13 深マゼンタ（Carol）
   "#FFD700", // 14 ブライトゴールド（Player）
   "#F5CB00", // 15 やや暗いゴールド（UIアクセント）
@@ -41,7 +41,7 @@ const PALETTE = [
 const C = {
   // キャラクター（草緑背景に映える補色系）
   alice:  PALETTE[11], // #8338EC バイオレット
-  bob:    PALETTE[12], // #E8620A 温かみオレンジ
+  bob:    PALETTE[12], // #B84700 温かみオレンジ（WCAG AA）
   carol:  PALETTE[13], // #D4187A 深マゼンタ
   player: PALETTE[14], // #FFD700 ブライトゴールド
 

@@ -132,7 +132,7 @@ class TTSManager {
       return;
     }
     try {
-      this._ttsWorker = new Worker("js/hf-tts-worker.js?v=gh19", { type: "module" });
+      this._ttsWorker = new Worker("js/hf-tts-worker.js?v=gh20", { type: "module" });
       this.browserTtsLoading = true;
       this.browserTtsError = "";
       this._ttsWorker.onmessage = (event) => {
@@ -164,6 +164,7 @@ class TTSManager {
         }
       };
       this._ttsWorker.onerror = (err) => {
+        this.browserTtsReady = false;
         this.browserTtsLoading = false;
         this.browserTtsError = err?.message || "TTS Worker error";
         try { this._ttsWorker?.terminate(); } catch (_) {}
@@ -241,6 +242,9 @@ class TTSManager {
   }
 
   async _createAudioFromBlob(blob, item, estDuration, playbackRate = 1.0) {
+    if (item.cancelled || !this.enabled) {
+      return { kind: "cancelled", durationSec: 0 };
+    }
     const url = URL.createObjectURL(blob);
     item._blobUrl = url;
     const audio = new Audio(url);
@@ -267,6 +271,14 @@ class TTSManager {
       audio.addEventListener("error", finish, { once: true });
       try { audio.load(); } catch (_) { finish(); }
     });
+
+    if (item.cancelled || !this.enabled) {
+      if (item._blobUrl === url) {
+        try { URL.revokeObjectURL(url); } catch (_) {}
+        item._blobUrl = null;
+      }
+      return { kind: "cancelled", durationSec: 0 };
+    }
 
     const rawDur = (isFinite(audio.duration) && audio.duration > 0.1)
       ? audio.duration
@@ -439,6 +451,11 @@ class TTSManager {
       item.started = true;
       try { item.onStart?.({ durationSec: 0, mode }); } catch (_) {}
     }
+    if (item._abortPlay) {
+      const abortFn = item._abortPlay;
+      item._abortPlay = null;
+      try { abortFn(mode); } catch (_) {}
+    }
     if (!item.ended) {
       item.ended = true;
       try { item.onEnd?.({ mode }); } catch (_) {}
@@ -496,14 +513,18 @@ class TTSManager {
 
     try {
       const resp = await fetch("/tts-check");
-      const data = await resp.json();
-      this.localAvailable = Boolean(data.ok);
-      if (data.repo) this.repo = data.repo;
-      this._failCount = 0;
-      if (this.localAvailable) {
-        console.log(`[TTS] Hugging Face Style-Bert-VITS2 (${this.repo}): 利用可能`);
+      if (!resp.ok) {
+        this.localAvailable = false;
       } else {
-        console.info("[TTS] ローカル Style-Bert-VITS2 未起動のため自然ブラウザ音声を使用します");
+        const data = await resp.json();
+        this.localAvailable = Boolean(data.ok);
+        if (data.repo) this.repo = data.repo;
+        this._failCount = 0;
+        if (this.localAvailable) {
+          console.log(`[TTS] Hugging Face Style-Bert-VITS2 (${this.repo}): 利用可能`);
+        } else {
+          console.info("[TTS] ローカル Style-Bert-VITS2 未起動のため自然ブラウザ音声を使用します");
+        }
       }
     } catch (err) {
       this.localAvailable = false;
@@ -595,6 +616,9 @@ class TTSManager {
       const cacheKey = `${characterName}::${cleanText}`;
       const cached = this._wavCache.get(cacheKey);
       if (cached) {
+        // LRU順序を更新
+        this._wavCache.delete(cacheKey);
+        this._wavCache.set(cacheKey, cached);
         return await this._createAudioFromWavBuffer(cached, item, estDuration, playbackRate);
       }
 
@@ -766,6 +790,7 @@ class TTSManager {
           const done = (mode = "hf-audio") => {
             if (finished) return;
             finished = true;
+            if (item._abortPlay === done) item._abortPlay = null;
             this._clearTimer(safetyTimer);
             if (this._currentSource === src) this._currentSource = null;
             try { src.onended = null; src.disconnect(); } catch (_) {}
@@ -773,6 +798,7 @@ class TTSManager {
             fireEnd(mode);
             resolve();
           };
+          item._abortPlay = done;
 
           const safetyTimer = this._setTimer(
             () => done("hf-audio-timeout"),
@@ -810,6 +836,7 @@ class TTSManager {
         const done = (mode = "hf-audio") => {
           if (finished) return;
           finished = true;
+          if (item._abortPlay === done) item._abortPlay = null;
           this._clearTimer(safetyTimer);
           if (this._currentAudio === audio) this._currentAudio = null;
           if (item._blobUrl === url) {
@@ -819,6 +846,7 @@ class TTSManager {
           fireEnd(mode);
           resolve();
         };
+        item._abortPlay = done;
 
         const safetyTimer = this._setTimer(
           () => done("hf-audio-timeout"),
@@ -889,11 +917,13 @@ class TTSManager {
       const done = (mode = "browser-speech") => {
         if (finished) return;
         finished = true;
+        if (item._abortPlay === done) item._abortPlay = null;
         this._clearTimer(startGuard);
         this._clearTimer(endGuard);
         fireEnd(mode);
         resolve();
       };
+      item._abortPlay = done;
 
       // 一部ブラウザで onstart が発火しない場合でもチャットが止まらないよう保護
       const startGuard = this._setTimer(

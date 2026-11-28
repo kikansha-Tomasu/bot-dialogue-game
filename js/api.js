@@ -111,7 +111,7 @@ class HuggingFaceClient {
       return;
     }
     try {
-      this._worker = new Worker("js/hf-browser-worker.js?v=gh19", { type: "module" });
+      this._worker = new Worker("js/hf-browser-worker.js?v=gh20", { type: "module" });
       this._workerLoading = true;
       this._workerError = "";
       this._workerStage = "connecting";
@@ -173,9 +173,12 @@ class HuggingFaceClient {
         }
       };
       this._worker.onerror = (err) => {
+        this._workerReady = false;
         this._workerLoading = false;
         this._workerStage = "error";
         this._workerError = err?.message || "Web Worker error";
+        this.hfAvailable = false;
+        this.lmAvailable = false;
         try { this._worker?.terminate(); } catch (_) {}
         this._worker = null;
         for (const [, r] of this._workerPending) {
@@ -583,7 +586,7 @@ class HuggingFaceClient {
 
     // 2. 敬語（です/ます）とタメ口の不自然な混在、および親しみやすい住人なのに堅すぎる敬語
     const hasPolite = /(?:です|ます|ました|でした|ません|でしょうか)(?:[よねか！!？?。]|$)/.test(body);
-    const hasCasual = /(?:だよ|だね|だな|だぞ|だぜ|かな|なの|しよう|[うくすつぬぶむるぐ][よねさ]|た[よねさ]|い[よねさ]|んだ|っと)(?:[。！？!?]|$)/.test(body);
+    const hasCasual = /(?:だよ|だね|だな|だぞ|だぜ|かな|なの|しよう|[うくすつぬぶむるぐ][よねさ]|た[よねさ]|い[よねさ]|んだ|っと)(?:[。！？!?、]|$)/.test(body);
     if (hasPolite && hasCasual) {
       score -= 22;
       issues.push("敬語とタメ口が混ざらないよう口調を統一する");
@@ -626,8 +629,7 @@ class HuggingFaceClient {
     const isActionMemo = rawIncoming.startsWith("(") && rawIncoming.endsWith(")");
     const incoming = isActionMemo
       ? ""
-      : rawIncoming
-          .replace(/^[@＠]\w+[\s、,:：]*/, "")
+      : HuggingFaceClient.stripLeadingMention(rawIncoming)
           .replace(/[\s。！？!?、,「」『』]/g, "");
     const cleanBody = body.replace(/[\s。！？!?、,「」『』]/g, "");
     if (incoming.length >= 8 && cleanBody.length >= 6) {

@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Bot対話ゲーム</title>
-  <script src="colors.js?v=gh19"></script>
-  <link rel="stylesheet" href="css/style.css?v=gh19">
+  <script src="colors.js?v=gh20"></script>
+  <link rel="stylesheet" href="css/style.css?v=gh20">
 </head>
 <body>
 
@@ -14,7 +14,8 @@
 <div id="app">
   <!-- ゲームキャンバス領域 -->
   <div id="canvas-wrap">
-    <canvas id="game-canvas"></canvas>
+    <canvas id="game-canvas" role="img" aria-label="街のゲームマップとキャラクター"></canvas>
+    <div id="modal-backdrop" class="hidden" aria-hidden="true"></div>
 
     <!-- 建築メニューパネル -->
     <div id="build-panel" class="modal-panel hidden" role="dialog" aria-modal="true" aria-labelledby="build-title">
@@ -48,7 +49,7 @@
       <!-- 価格チャート＆テクニカル指標 -->
       <div id="price-chart-section">
         <div id="price-chart-wrap">
-          <canvas id="price-chart"></canvas>
+          <canvas id="price-chart" role="img" aria-label="取引価格チャート"></canvas>
           <div id="price-chart-empty" class="hidden">約定データなし</div>
         </div>
         <div id="indicator-controls" role="group" aria-label="テクニカル指標">
@@ -247,7 +248,7 @@
     </div>
 
     <!-- チャット欄常設のコンパクト HF AI 読み込みバー（読み込み中のみ表示） -->
-    <div id="chat-hf-loader" class="hidden" role="status" aria-live="polite">
+    <div id="chat-hf-loader" class="hidden" role="button" tabindex="0" aria-live="polite" aria-label="Hugging Face AIモデルの読み込み状態を表示または再読込">
       <div class="chat-hf-top">
         <span id="chat-hf-label">🤗 AIモデル読込中...</span>
         <span id="chat-hf-pct"></span>
@@ -261,6 +262,7 @@
 
     <div id="chat-input-area">
       <div id="proximity-hint" aria-label="会話相手クイック選択"></div>
+      <div id="chat-input-error" class="hidden" role="alert" aria-live="assertive"></div>
       <div id="input-row">
         <input
           id="chat-input"
@@ -279,22 +281,22 @@
 </div>
 
 <!-- スクリプト読み込み順序が重要 -->
-<script src="js/config.js?v=gh19"></script>
-<script src="js/resources.js?v=gh19"></script>
-<script src="js/inventory.js?v=gh19"></script>
-<script src="js/buildings.js?v=gh19"></script>
-<script src="js/trade.js?v=gh19"></script>
-<script src="js/pathfinding.js?v=gh19"></script>
-<script src="js/farming.js?v=gh19"></script>
-<script src="js/progression.js?v=gh19"></script>
-<script src="js/storage.js?v=gh19"></script>
-<script src="js/characters.js?v=gh19"></script>
-<script src="js/map.js?v=gh19"></script>
-<script src="js/chat.js?v=gh19"></script>
-<script src="js/api.js?v=gh19"></script>
-<script src="js/tts.js?v=gh19"></script>
-<script src="js/ai-brain.js?v=gh19"></script>
-<script src="js/game.js?v=gh19"></script>
+<script src="js/config.js?v=gh20"></script>
+<script src="js/resources.js?v=gh20"></script>
+<script src="js/inventory.js?v=gh20"></script>
+<script src="js/buildings.js?v=gh20"></script>
+<script src="js/trade.js?v=gh20"></script>
+<script src="js/pathfinding.js?v=gh20"></script>
+<script src="js/farming.js?v=gh20"></script>
+<script src="js/progression.js?v=gh20"></script>
+<script src="js/storage.js?v=gh20"></script>
+<script src="js/characters.js?v=gh20"></script>
+<script src="js/map.js?v=gh20"></script>
+<script src="js/chat.js?v=gh20"></script>
+<script src="js/api.js?v=gh20"></script>
+<script src="js/tts.js?v=gh20"></script>
+<script src="js/ai-brain.js?v=gh20"></script>
+<script src="js/game.js?v=gh20"></script>
 
 </body>
 </html>

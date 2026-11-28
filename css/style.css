@@ -404,6 +404,29 @@ select:focus-visible {
 }
 
 /* ─── Shared Modal Panels (キャンバス中央に配置しチャット欄を隠さない) ─── */
+#modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(24, 14, 8, 0.36);
+  z-index: 290;
+}
+
+#modal-backdrop.hidden { display: none !important; }
+
+#chat-input-error {
+  margin-bottom: 6px;
+  padding: 5px 8px;
+  border-radius: 5px;
+  background: #FDECEA;
+  border: 1px solid var(--c-dangerText);
+  color: var(--c-dangerText);
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+#chat-input-error.hidden { display: none !important; }
+
 .modal-panel {
   position: absolute;
   top: 50%;
@@ -1887,6 +1910,26 @@ select:focus-visible {
     height: 45vh;
     border-left: none;
     border-top: 2px solid var(--c-inputBorder);
+  }
+  #modal-backdrop {
+    position: fixed;
+    inset: 0;
+  }
+  .modal-panel {
+    position: fixed;
+    top: 12px;
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    transform: none;
+    width: auto !important;
+    max-width: none;
+    max-height: calc(100vh - 24px);
+  }
+  .farm-my-plots,
+  .crop-grid,
+  .recipe-grid {
+    grid-template-columns: 1fr;
   }
 }
 

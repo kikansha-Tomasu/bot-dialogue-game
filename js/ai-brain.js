@@ -399,81 +399,80 @@ class AIBrain {
     if (this.isProcessing[c.id]) return;
 
     this.isProcessing[c.id] = true;
-
-    // 行動前に長期戦略を見直し・更新（3ターンごと／順位変動時）
-    try {
-      await this._maybeReviseStrategy(c);
-    } catch (_) {}
-
-    // 低確率（10%）の探索ステップは戦略重視フォールバックへ
-    if (Math.random() < GAME_CONFIG.aiRandomActionRate) {
-      this.isProcessing[c.id] = false;
-      this._fallbackAction(c);
-      return;
-    }
-
-    const s = this._ensureStrategy(c);
-    const invSummary = getInventorySummary(c.inventory) || "空";
-    const coinAmt = c.inventory.coin || 0;
-    const myBuildings = this.buildingManager?.placed.filter(b => b.builderId === c.id) ?? [];
-    const affordable = this.buildingManager
-      ? Object.keys(BUILDING_RECIPES).filter(t => inventoryCanAfford(c.inventory, BUILDING_RECIPES[t].cost))
-      : [];
-    const hasNodes = this.resourceManager.nodes.some(n => !n.isEmpty);
-    const executableOrders = this.orderBook
-      ? this.orderBook.orders.filter(o =>
-          o.posterId !== c.id &&
-          (c.inventory[o.buyType] || 0) >= o.buyAmount &&
-          (o.posterRef.inventory[o.sellType] || 0) >= o.sellAmount
-        )
-      : [];
-
-    const townLine = this.progression
-      ? `現在の街の発展度: 「${this.progression.getTownSpec().name}」\n`
-      : "";
-    const farmLine = this.farmManager
-      ? `畑の様子: ${this.farmManager.buildSummaryForAI(c)}\n`
-      : "";
-    const focusJa = { gather: "採集", farm: "農業・料理", trade: "取引", build: "建築", chat: "会話" }[s?.focusAction] || "採集";
-    const strategyLine = s
-      ? `あなたの得意なやり方: ${s.styleLabel} ／ いまの方針: ${s.goal}（重視: ${focusJa}, 注目品目: ${RESOURCE_LABEL[s.targetItem] || s.targetItem}, 意識している相手: ${s.targetRival}）\n`
-      : "";
-
-    const context =
-      strategyLine +
-      `あなた（${c.name}）の手持ち: ${invSummary}、コイン: ${coinAmt}枚\n` +
-      townLine +
-      `街の資産順位（みんな一番を目指して競っています）:\n${this._buildRivalRankingSummary(c)}\n` +
-      `現在の推定総資産内訳:\n${this._buildAssetValueSummary(c)}\n` +
-      `みんなの持ち物:\n${this._buildOtherInventoriesSummary(c)}\n` +
-      `みんなの居場所:\n${this._buildPositionSummary(c)}\n` +
-      `採集場所の残り:\n${this._buildResourceNodesSummary(c)}\n` +
-      farmLine +
-      `街に建っている施設:\n${this._buildBuildingsSummary()}\n` +
-      (this.orderBook ? `現在の取引板:\n${this._buildOrderBookSummary()}\n` : "") +
-      `直近の取引価格:\n${this._buildPriceSummary()}\n` +
-      `建てられる施設: ${affordable.length ? affordable.map(t => `${BUILDING_RECIPES[t].emoji}${BUILDING_RECIPES[t].name}`).join(", ") : "なし（材料不足）"}\n` +
-      `自分の建物数: ${myBuildings.length}/2\n` +
-      `採集できる場所: ${hasNodes ? "あり" : "なし（今は採り尽くされている）"}\n` +
-      (executableOrders.length > 0 ? `取引板に今すぐ成立させられる注文が${executableOrders.length}件あります。trade + execute で約定できます。\n` : "") +
-      `いまの方針に沿って、次に何をするか決めてください。`;
-
-    const compactContext = this._buildCompactStrategicContext(c);
-
     let planText = null;
+    let tookRandomFallback = false;
+
     try {
-      planText = await this.apiClient.callAIForMasterAction(c, context, "", compactContext);
-      if (planText) {
-        if (!this.llmAvailable) {
-          this.llmAvailable = true;
+      // 行動前に長期戦略を見直し・更新（3ターンごと／順位変動時）
+      try {
+        await this._maybeReviseStrategy(c);
+      } catch (_) {}
+
+      // 低確率（10%）の探索ステップは戦略重視フォールバックへ
+      if (Math.random() < GAME_CONFIG.aiRandomActionRate) {
+        tookRandomFallback = true;
+      } else {
+        const s = this._ensureStrategy(c);
+        const invSummary = getInventorySummary(c.inventory) || "空";
+        const coinAmt = c.inventory.coin || 0;
+        const myBuildings = this.buildingManager?.placed.filter(b => b.builderId === c.id) ?? [];
+        const affordable = this.buildingManager
+          ? Object.keys(BUILDING_RECIPES).filter(t => inventoryCanAfford(c.inventory, BUILDING_RECIPES[t].cost))
+          : [];
+        const hasNodes = this.resourceManager.nodes.some(n => !n.isEmpty);
+        const executableOrders = this.orderBook
+          ? this.orderBook.orders.filter(o =>
+              o.posterId !== c.id &&
+              (c.inventory[o.buyType] || 0) >= o.buyAmount &&
+              (o.posterRef.inventory[o.sellType] || 0) >= o.sellAmount
+            )
+          : [];
+
+        const townLine = this.progression
+          ? `現在の街の発展度: 「${this.progression.getTownSpec().name}」\n`
+          : "";
+        const farmLine = this.farmManager
+          ? `畑の様子: ${this.farmManager.buildSummaryForAI(c)}\n`
+          : "";
+        const focusJa = { gather: "採集", farm: "農業・料理", trade: "取引", build: "建築", chat: "会話" }[s?.focusAction] || "採集";
+        const strategyLine = s
+          ? `あなたの得意なやり方: ${s.styleLabel} ／ いまの方針: ${s.goal}（重視: ${focusJa}, 注目品目: ${RESOURCE_LABEL[s.targetItem] || s.targetItem}, 意識している相手: ${s.targetRival}）\n`
+          : "";
+
+        const context =
+          strategyLine +
+          `あなた（${c.name}）の手持ち: ${invSummary}、コイン: ${coinAmt}枚\n` +
+          townLine +
+          `街の資産順位（みんな一番を目指して競っています）:\n${this._buildRivalRankingSummary(c)}\n` +
+          `現在の推定総資産内訳:\n${this._buildAssetValueSummary(c)}\n` +
+          `みんなの持ち物:\n${this._buildOtherInventoriesSummary(c)}\n` +
+          `みんなの居場所:\n${this._buildPositionSummary(c)}\n` +
+          `採集場所の残り:\n${this._buildResourceNodesSummary(c)}\n` +
+          farmLine +
+          `街に建っている施設:\n${this._buildBuildingsSummary()}\n` +
+          (this.orderBook ? `現在の取引板:\n${this._buildOrderBookSummary()}\n` : "") +
+          `直近の取引価格:\n${this._buildPriceSummary()}\n` +
+          `建てられる施設: ${affordable.length ? affordable.map(t => `${BUILDING_RECIPES[t].emoji}${BUILDING_RECIPES[t].name}`).join(", ") : "なし（材料不足）"}\n` +
+          `自分の建物数: ${myBuildings.length}/2\n` +
+          `採集できる場所: ${hasNodes ? "あり" : "なし（今は採り尽くされている）"}\n` +
+          (executableOrders.length > 0 ? `取引板に今すぐ成立させられる注文が${executableOrders.length}件あります。trade + execute で約定できます。\n` : "") +
+          `いまの方針に沿って、次に何をするか決めてください。`;
+
+        const compactContext = this._buildCompactStrategicContext(c);
+
+        planText = await this.apiClient.callAIForMasterAction(c, context, "", compactContext);
+        if (planText) {
+          if (!this.llmAvailable) {
+            this.llmAvailable = true;
+            if (this.onStateChange) this.onStateChange();
+          }
+        } else if (this.apiClient.lmAvailable === false) {
+          this.llmAvailable = false;
           if (this.onStateChange) this.onStateChange();
         }
-      } else if (this.apiClient.lmAvailable === false) {
-        this.llmAvailable = false;
-        if (this.onStateChange) this.onStateChange();
       }
     } catch (err) {
-      console.warn(`[AIBrain] ${c.name} callAIForMasterAction failed:`, err.message);
+      console.warn(`[AIBrain] ${c.name} callAIForMasterAction failed:`, err?.message || err);
     } finally {
       this.isProcessing[c.id] = false;
     }
@@ -484,7 +483,10 @@ class AIBrain {
       return;
     }
 
-    if (!planText) { this._fallbackAction(c); return; }
+    if (tookRandomFallback || !planText) {
+      this._fallbackAction(c);
+      return;
+    }
 
     const planMatch = planText.match(/PLAN\s*[:：]\s*(gather|farm|trade|build|chat)/i);
     if (!planMatch) { this._fallbackAction(c); return; }
@@ -1186,6 +1188,7 @@ class AIBrain {
   }
 
   _buildPriceSummary() {
+    if (!this.orderBook) return "（未成立）";
     const base = ["wood", "stone", "herb", "fish"];
     const tradedExtras = this._getTradableItemTypes().filter(
       t => !base.includes(t) && (this.orderBook?.priceHistory?.[t]?.length || 0) > 0

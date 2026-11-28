@@ -213,6 +213,10 @@ class OrderBook {
     const resourceType = sellType === "coin" ? buyType : sellType;
     if (!TRADE_RESOURCES.includes(resourceType)) return null;
     if (this.getAvailableBalance(poster, sellType) < sellAmount) return null;
+    const dup = this.orders.find(o =>
+      o.posterId === poster.id && o.sellType === sellType && o.buyType === buyType
+    );
+    if (dup) return null;
 
     const side = sellType === "coin" ? "buy" : "sell";
     const unitPrice = side === "buy" ? sellAmount / buyAmount : buyAmount / sellAmount;
@@ -505,11 +509,12 @@ class OrderBook {
       inventoryAdd(order.posterRef.inventory, giveType, takeQty);
 
       const remRes = order.buyAmount - takeQty;
-      if (remRes <= 0) {
+      const remCoinCap = order.sellAmount - coinQty;
+      if (remRes <= 0 || remCoinCap <= 0) {
         this.orders = this.orders.filter(o => o.id !== order.id);
       } else {
         order.buyAmount  = remRes;
-        order.sellAmount = Math.max(1, Math.min(order.sellAmount - coinQty, Math.round(remRes * order.unitPrice)));
+        order.sellAmount = Math.max(1, Math.min(remCoinCap, Math.round(remRes * order.unitPrice)));
       }
 
       this._recordTrade(giveType, coinQty, takeQty, order.posterName, player.name);
@@ -625,14 +630,20 @@ class OrderBook {
         isCoinSell ? ex.posterName : newOrder.posterName
       );
 
-      // 残量を指値単価を維持したまま更新
+      // 残量を指値単価を維持したまま更新（残コイン上限が0以下なら注文終了）
       const remNewRes = newResQty - resourceQty;
       if (remNewRes <= 0) {
         newOrder.buyAmount  = 0;
         newOrder.sellAmount = 0;
       } else if (isCoinSell) {
-        newOrder.buyAmount  = remNewRes;
-        newOrder.sellAmount = Math.max(1, Math.min(newOrder.sellAmount - coinQty, Math.round(remNewRes * newOrder.unitPrice)));
+        const remNewCoins = newOrder.sellAmount - coinQty;
+        if (remNewCoins <= 0) {
+          newOrder.buyAmount  = 0;
+          newOrder.sellAmount = 0;
+        } else {
+          newOrder.buyAmount  = remNewRes;
+          newOrder.sellAmount = Math.max(1, Math.min(remNewCoins, Math.round(remNewRes * newOrder.unitPrice)));
+        }
       } else {
         newOrder.sellAmount = remNewRes;
         newOrder.buyAmount  = Math.max(1, Math.round(remNewRes * newOrder.unitPrice));
@@ -645,8 +656,13 @@ class OrderBook {
         ex.sellAmount = remExRes;
         ex.buyAmount  = Math.max(1, Math.round(remExRes * ex.unitPrice));
       } else {
-        ex.buyAmount  = remExRes;
-        ex.sellAmount = Math.max(1, Math.min(ex.sellAmount - coinQty, Math.round(remExRes * ex.unitPrice)));
+        const remExCoins = ex.sellAmount - coinQty;
+        if (remExCoins <= 0) {
+          this.orders = this.orders.filter(o => o.id !== ex.id);
+        } else {
+          ex.buyAmount  = remExRes;
+          ex.sellAmount = Math.max(1, Math.min(remExCoins, Math.round(remExRes * ex.unitPrice)));
+        }
       }
 
       anyMatch = true;

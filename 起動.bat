@@ -31,6 +31,11 @@ if exist "%LOCALAPPDATA%\Programs\Python\Python312\python.exe" (
 if not %errorlevel%==0 (
     echo [INFO] 依存パッケージをインストールしています...
     %PY_CMD% -m pip install -r requirements.txt
+    if not %errorlevel%==0 (
+        echo [ERROR] 依存パッケージのインストールに失敗しました。
+        pause
+        exit /b 1
+    )
 )
 
 start /b powershell -Command "Start-Sleep 2; Start-Process 'http://127.0.0.1:8765'"

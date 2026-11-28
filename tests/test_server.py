@@ -277,6 +277,36 @@ class TestServerSecurityAndAPI(unittest.TestCase):
             "いい木材が取れたよ！",
         )
 
+    def test_chat_validates_max_tokens_and_handles_invalid_upstream_json(self):
+        for bad_tokens in ("abc", 0, -5, True):
+            with self.subTest(max_tokens=bad_tokens):
+                resp = self.client.post(
+                    "/chat",
+                    json={"messages": [{"role": "user", "content": "hi"}], "max_tokens": bad_tokens},
+                )
+                self.assertEqual(resp.status_code, 400)
+
+        resp_empty = self.client.post("/chat", json={"messages": []})
+        self.assertEqual(resp_empty.status_code, 400)
+
+        fake_bad_json = MagicMock(status_code=200)
+        fake_bad_json.json.side_effect = ValueError("not json")
+        with patch("server.requests.post", return_value=fake_bad_json):
+            resp = self.client.post(
+                "/chat",
+                json={"model": "test", "messages": [{"role": "user", "content": "hi"}]},
+            )
+            self.assertEqual(resp.status_code, 502)
+
+    def test_security_headers_and_ipv6_cors(self):
+        resp = self.client.get("/tts-check", headers={"Origin": "http://[::1]:8765"})
+        self.assertEqual(resp.headers.get("Access-Control-Allow-Origin"), "http://[::1]:8765")
+        self.assertEqual(resp.headers.get("X-Content-Type-Options"), "nosniff")
+        self.assertEqual(resp.headers.get("X-Frame-Options"), "SAMEORIGIN")
+        self.assertTrue(server._is_local_url("http://127.0.0.1:8765/chat"))
+        self.assertTrue(server._is_local_url("http://[::1]:8765/chat"))
+        self.assertFalse(server._is_local_url("https://localhost.evil.example/chat"))
+
 
 if __name__ == "__main__":
     unittest.main()

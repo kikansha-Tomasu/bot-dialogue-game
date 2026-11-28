@@ -20,6 +20,40 @@ class BuildingManager {
     this.isMenuOpen = false;
     this.pendingType = null;
     this.onChange = null;
+    this.navGrid = null;
+    this.canvasWidth = 0;
+    this.canvasHeight = 0;
+    this._delegatedList = false;
+  }
+
+  setBounds(w, h, navGrid = null) {
+    if (w > 0 && h > 0) {
+      this.canvasWidth = w;
+      this.canvasHeight = h;
+    }
+    if (navGrid) this.navGrid = navGrid;
+  }
+
+  snapToWalkable(navGrid = this.navGrid, w = this.canvasWidth, h = this.canvasHeight) {
+    if (w > 0 && h > 0) {
+      this.canvasWidth = w;
+      this.canvasHeight = h;
+    }
+    if (navGrid) this.navGrid = navGrid;
+    const margin = 34;
+    this.placed.forEach(b => {
+      if (this.canvasWidth > margin * 2 && this.canvasHeight > margin * 2) {
+        b.x = Math.max(margin, Math.min(this.canvasWidth - margin, b.x));
+        b.y = Math.max(margin, Math.min(this.canvasHeight - margin, b.y));
+      }
+      if (this.navGrid?.isReady?.() && this.navGrid.isPointBlocked(b.x, b.y, 12)) {
+        const safe = this.navGrid.findNearestWalkablePoint(b.x, b.y);
+        if (safe) {
+          b.x = safe.x;
+          b.y = safe.y;
+        }
+      }
+    });
   }
 
   toggleMenu() {
@@ -89,13 +123,16 @@ class BuildingManager {
       </button>`;
     }).join("");
 
-    list.querySelectorAll(".build-item:not([disabled])").forEach(el => {
-      el.addEventListener("click", () => {
+    if (!this._delegatedList) {
+      this._delegatedList = true;
+      list.addEventListener("click", (e) => {
+        const el = e.target.closest(".build-item:not([disabled])");
+        if (!el) return;
         this.pendingType = el.dataset.type;
         this._closePanel();
         this.isMenuOpen = false;
       });
-    });
+    }
 
     document.getElementById("build-panel")?.classList.remove("hidden");
   }
@@ -103,24 +140,47 @@ class BuildingManager {
   _closePanel() {
     if (typeof document === "undefined") return;
     document.getElementById("build-panel")?.classList.add("hidden");
+    const anyOpen = ["victory-panel", "progression-panel", "orderbook-panel", "inventory-panel", "build-panel"]
+      .some(id => {
+        const el = document.getElementById(id);
+        return el && !el.classList.contains("hidden");
+      });
+    if (!anyOpen) {
+      document.getElementById("modal-backdrop")?.classList.add("hidden");
+    }
   }
 
   selectRecipe(type) { this.pendingType = type; }
 
-  // 既存建物と重ならない座標を探す（重なりによる視認性低下を防止）
+  // 既存建物と重ならず、キャンバス内＆通行可能な座標を探す
   _findNonOverlappingPos(baseX, baseY, minDist = 48) {
+    const margin = 34;
+    const clampX = (x) => (this.canvasWidth > margin * 2 ? Math.max(margin, Math.min(this.canvasWidth - margin, x)) : x);
+    const clampY = (y) => (this.canvasHeight > margin * 2 ? Math.max(margin, Math.min(this.canvasHeight - margin, y)) : y);
+    const isBlocked = (x, y) => Boolean(this.navGrid?.isReady?.() && this.navGrid.isPointBlocked(x, y, 12));
+
     const offsets = [
       [0, 0], [46, 0], [-46, 0], [0, 46], [0, -46],
       [42, 42], [-42, 42], [42, -42], [-42, -42],
       [72, 0], [-72, 0], [0, 72], [0, -72],
     ];
     for (const [dx, dy] of offsets) {
-      const tx = baseX + dx;
-      const ty = baseY + dy;
+      const tx = clampX(baseX + dx);
+      const ty = clampY(baseY + dy);
+      if (isBlocked(tx, ty)) continue;
       const overlaps = this.placed.some(b => Math.hypot(b.x - tx, b.y - ty) < minDist);
       if (!overlaps) return { x: tx, y: ty };
     }
-    return { x: baseX + (Math.random() - 0.5) * 40, y: baseY + (Math.random() - 0.5) * 40 };
+    const cx = clampX(baseX);
+    const cy = clampY(baseY);
+    if (isBlocked(cx, cy)) {
+      const safe = this.navGrid.findNearestWalkablePoint(cx, cy);
+      if (safe) return { x: clampX(safe.x), y: clampY(safe.y) };
+    }
+    return {
+      x: clampX(baseX + (Math.random() - 0.5) * 40),
+      y: clampY(baseY + (Math.random() - 0.5) * 40),
+    };
   }
 
   placeAtForChar(char, type) {

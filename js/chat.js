@@ -93,11 +93,14 @@ class ChatManager {
 
     this.historyEl.appendChild(el);
 
-    // 長時間プレイ時の DOM 肥大化を防ぐ
+    // 長時間プレイ時の DOM 肥大化を防ぐ（先頭が typing-indicator でも後続の通常メッセージを削除）
     while (this.historyEl.children.length > this.maxDomMessages) {
-      const first = this.historyEl.firstElementChild;
-      if (!first || this.typingIds.has(first.id)) break;
-      first.remove();
+      let target = this.historyEl.firstElementChild;
+      while (target && this.typingIds.has(target.id)) {
+        target = target.nextElementSibling;
+      }
+      if (!target) break;
+      target.remove();
     }
   }
 
@@ -148,14 +151,25 @@ class ChatManager {
   }
 
   parseMention(text) {
-    const match = String(text ?? "").trim().match(/^[@＠]([A-Za-z]+)/);
-    return match ? match[1] : null;
+    const match = String(text ?? "").trim().match(
+      /^[@＠]([A-Za-z0-9_]+|アリス|ボブ|キャロル|プレイヤー)(?:さん|くん|君|ちゃん|様)?(?=$|[\s、,:：!！])/
+    );
+    if (match) return match[1];
+    const fallback = String(text ?? "").trim().match(/^[@＠]([A-Za-z]+|アリス|ボブ|キャロル|プレイヤー)/);
+    return fallback ? fallback[1] : null;
   }
 
   resolveCharacter(name, characters) {
     if (!name) return null;
-    const lower = name.toLowerCase();
-    return characters.find(c => c.name.toLowerCase() === lower) || null;
+    const aliasMap = {
+      "アリス": "alice",
+      "ボブ": "bob",
+      "キャロル": "carol",
+      "プレイヤー": "player",
+    };
+    const raw = String(name).trim();
+    const lower = aliasMap[raw] || raw.toLowerCase();
+    return characters.find(c => c.name.toLowerCase() === lower || c.id.toLowerCase() === lower) || null;
   }
 }
 

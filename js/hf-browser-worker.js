@@ -331,14 +331,14 @@ async function runGeneration(messages, maxNewTokens, temperature, doSample) {
   return cleanJapanese(extractGeneratedContent(output));
 }
 
-self.onmessage = async (event) => {
+let genQueue = Promise.resolve();
+
+self.onmessage = (event) => {
   const msg = event.data || {};
   if (msg.type === "load") {
-    try {
-      await ensureModelLoaded(false);
-    } catch (err) {
+    ensureModelLoaded(false).catch((err) => {
       self.postMessage({ type: "error", message: String(err?.message || err) });
-    }
+    });
     return;
   }
 
@@ -351,41 +351,44 @@ self.onmessage = async (event) => {
       doSample = true,
       allowStructuredPlan = false,
     } = msg;
-    try {
-      if (!generator) {
-        await ensureModelLoaded(false);
+    // ONNX Runtime / WebGPU への並列推論呼び出しを防ぐため直列化キューで処理する
+    genQueue = genQueue.then(async () => {
+      try {
+        if (!generator) {
+          await ensureModelLoaded(false);
+        }
+
+        let content = await runGeneration(messages, maxNewTokens, temperature, doSample);
+
+        // ランタイムで文字化け・トークン崩壊を検知した場合：決定論的デコードで再試行
+        if (isCorruptedJapanese(content, allowStructuredPlan)) {
+          console.warn(`[HF Browser Worker] Corrupted output on ${loadedDevice}/${loadedDtype}; retrying greedy...`);
+          content = await runGeneration(messages, maxNewTokens, 0, false);
+        }
+
+        // WebGPU上で決定論的デコードでも崩壊する場合は自動的にWASM(q8)へ退避して再生成
+        if (isCorruptedJapanese(content, allowStructuredPlan) && loadedDevice === "webgpu") {
+          console.warn("[HF Browser Worker] Switching from WebGPU to WASM q8 due to corrupted output...");
+          gpuBlacklisted = true;
+          await ensureModelLoaded(true);
+          content = await runGeneration(messages, maxNewTokens, 0.5, true);
+        }
+
+        self.postMessage({
+          type: "result",
+          requestId,
+          content,
+          modelId: loadedModelId,
+          device: loadedDevice,
+          dtype: loadedDtype,
+        });
+      } catch (err) {
+        self.postMessage({
+          type: "result",
+          requestId,
+          error: String(err?.message || err),
+        });
       }
-
-      let content = await runGeneration(messages, maxNewTokens, temperature, doSample);
-
-      // ランタイムで文字化け・トークン崩壊を検知した場合：決定論的デコードで再試行
-      if (isCorruptedJapanese(content, allowStructuredPlan)) {
-        console.warn(`[HF Browser Worker] Corrupted output on ${loadedDevice}/${loadedDtype}; retrying greedy...`);
-        content = await runGeneration(messages, maxNewTokens, 0, false);
-      }
-
-      // WebGPU上で決定論的デコードでも崩壊する場合は自動的にWASM(q8)へ退避して再生成
-      if (isCorruptedJapanese(content, allowStructuredPlan) && loadedDevice === "webgpu") {
-        console.warn("[HF Browser Worker] Switching from WebGPU to WASM q8 due to corrupted output...");
-        gpuBlacklisted = true;
-        await ensureModelLoaded(true);
-        content = await runGeneration(messages, maxNewTokens, 0.5, true);
-      }
-
-      self.postMessage({
-        type: "result",
-        requestId,
-        content,
-        modelId: loadedModelId,
-        device: loadedDevice,
-        dtype: loadedDtype,
-      });
-    } catch (err) {
-      self.postMessage({
-        type: "result",
-        requestId,
-        error: String(err?.message || err),
-      });
-    }
+    });
   }
 };

@@ -24,9 +24,29 @@
       this._spriteImages   = new Map();
       this._progImages     = new Map();
       this._overlayPlan    = null;
+      this._sortedObjects  = [];
       this.onReady         = null;
       this.onMapChange     = null;
       this._load();
+    }
+
+    _buildFallbackMap() {
+      const width = 12;
+      const height = 10;
+      return {
+        id: DEFAULT_MAP_ID,
+        name: "Central Plaza (Offline)",
+        description: "フォールバック草地マップ",
+        width,
+        height,
+        legend: { G: "grass" },
+        terrain: Array.from({ length: height }, () => "G".repeat(width)),
+        objects: [],
+      };
+    }
+
+    _cacheSortedObjects(mapData) {
+      this._sortedObjects = [...(mapData?.objects || [])].sort((a, b) => a.y - b.y || a.x - b.x);
     }
 
     async _load() {
@@ -39,8 +59,9 @@
 
         this._maps = Array.isArray(mapsDoc.maps) ? mapsDoc.maps : [];
         this._atlasAssets = Array.isArray(atlasDoc.assets) ? atlasDoc.assets : [];
-        this._mapData = this._maps.find(m => m.id === DEFAULT_MAP_ID) || this._maps[0] || null;
+        this._mapData = this._maps.find(m => m.id === DEFAULT_MAP_ID) || this._maps[0] || this._buildFallbackMap();
         this._overlayPlan = this._computeOverlayPlan(this._mapData);
+        this._cacheSortedObjects(this._mapData);
 
         await Promise.all([
           this._preloadAtlasImages(this._atlasAssets),
@@ -49,7 +70,15 @@
         this._ready = true;
         if (this.onReady) this.onReady(this.getMaps(), this.getCurrentMapId());
       } catch (err) {
-        console.warn("[MapRenderer] Failed to load tile assets:", err);
+        console.warn("[MapRenderer] Failed to load tile assets; using fallback map:", err);
+        const fallback = this._buildFallbackMap();
+        this._maps = [fallback];
+        this._atlasAssets = [];
+        this._mapData = fallback;
+        this._overlayPlan = null;
+        this._sortedObjects = [];
+        this._ready = true;
+        if (this.onReady) this.onReady(this.getMaps(), this.getCurrentMapId());
       }
     }
 
@@ -79,6 +108,7 @@
       if (!next) return false;
       this._mapData = next;
       this._overlayPlan = this._computeOverlayPlan(next);
+      this._cacheSortedObjects(next);
       if (this.onMapChange) this.onMapChange(next.id, next);
       return true;
     }
@@ -333,6 +363,7 @@
       const tileH = h / map.height;
 
       // 1. ベース地形タイル（街レベルに応じて道路が Lv.1〜5 に進化）
+      let drewAnyTile = false;
       for (let row = 0; row < map.terrain.length; row++) {
         const rowStr = map.terrain[row];
         for (let col = 0; col < rowStr.length; col++) {
@@ -344,7 +375,12 @@
           if (!img) img = this._tileImages.get(assetId);
           if (!img) continue;
           ctx.drawImage(img, col * tileW, row * tileH, tileW + 0.5, tileH + 0.5);
+          drewAnyTile = true;
         }
+      }
+      if (!drewAnyTile) {
+        ctx.fillStyle = typeof C !== "undefined" ? C.grassBase : "#5A8A44";
+        ctx.fillRect(0, 0, w, h);
       }
 
       // 2. 農業プログレッション区画（farm_soil + 8種作物の成長ステージ 0〜3）
@@ -360,9 +396,8 @@
         }
       }
 
-      // 3. マップ上の建物・自然オブジェクト
-      const sorted = [...(map.objects || [])].sort((a, b) => a.y - b.y || a.x - b.x);
-      for (const obj of sorted) {
+      // 3. マップ上の建物・自然オブジェクト（事前ソート済みキャッシュを使用）
+      for (const obj of this._sortedObjects) {
         const img = this._spriteImages.get(obj.asset);
         if (!img) continue;
         ctx.drawImage(img, obj.x * tileW, obj.y * tileH, tileW, tileH);

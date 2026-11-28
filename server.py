@@ -25,6 +25,7 @@ import sys
 import threading
 import zipfile
 from pathlib import Path, PurePosixPath
+from urllib.parse import urlparse
 
 import requests
 from flask import Flask, abort, jsonify, request, send_from_directory
@@ -172,7 +173,11 @@ _LOCAL_PROXIES = {"http": None, "https": None}
 
 
 def _is_local_url(url: str) -> bool:
-    return any(h in (url or "") for h in ("127.0.0.1", "localhost"))
+    try:
+        host = (urlparse(url or "").hostname or "").lower()
+        return host in ("127.0.0.1", "localhost", "::1")
+    except ValueError:
+        return False
 
 
 def get_hf_token() -> str:
@@ -216,6 +221,7 @@ _sbv2_models = {}
 _sbv2_model_styles = {}
 _sbv2_bert_loaded = False
 _sbv2_lock = threading.Lock()
+_pyopenjtalk_lock = threading.Lock()
 _tts_audio_cache = OrderedDict()
 _TTS_CACHE_MAX = 128
 
@@ -657,7 +663,9 @@ def _generate_with_llama_cpp(
         gen_tokens = min(max(64, int(max_new_tokens or 104)), 140)
         stop_seqs = ["\n\n", "</s>", "<|im_end|>", "<end_of_turn>", "<eos>"]
     else:
-        non_sys = [m for m in messages if m["role"] != "system"]
+        non_sys = [m for m in messages if m["role"] != "system"][-8:]
+        while non_sys and non_sys[0]["role"] == "assistant":
+            non_sys.pop(0)
         enhanced_sys = (
             f"{sys_text}\n"
             "重要: あなたはこの街に暮らす生身の人間です。相手も同じ街に暮らす人間として、自然な話し言葉の日本語1〜2文で返答してください。"
@@ -666,11 +674,11 @@ def _generate_with_llama_cpp(
         chat_msgs = (
             [{"role": "system", "content": enhanced_sys}]
             + profile["few_shot"]
-            + non_sys[-8:]
+            + non_sys
         )
         chat_msgs = normalize_hf_messages(chat_msgs, fold_system=is_gemma)
         gen_tokens = min(max(80, int(max_new_tokens or 120)), 160)
-        stop_seqs = ["\n", "</s>", "<|im_end|>", "<end_of_turn>", "<eos>"]
+        stop_seqs = ["\n\n", "</s>", "<|im_end|>", "<end_of_turn>", "<eos>"]
 
     eff_temp = profile["temperature"]
     if temperature is not None:
@@ -734,7 +742,7 @@ def _get_local_transformers_llm(base_model_id: str = ""):
             model = AutoModelForCausalLM.from_pretrained(
                 target_id,
                 token=token,
-                dtype=dtype,
+                torch_dtype=dtype,
                 low_cpu_mem_usage=True,
             )
             model.to(device)
@@ -744,33 +752,53 @@ def _get_local_transformers_llm(base_model_id: str = ""):
 
 
 def _generate_with_local_transformers(
-    messages: list, max_new_tokens: int = 44, requested_model: str = ""
+    messages: list, max_new_tokens: int = 120, requested_model: str = "", temperature: float | None = None
 ) -> dict:
     import torch
 
     profile = _detect_character_profile(requested_model, messages)
     tokenizer, model, device, loaded_id = _get_local_transformers_llm(HF_TRANSFORMERS_FALLBACK_MODEL)
-    target_name = _extract_target_mention(messages)
+
+    sys_text = "\n".join(m["content"] for m in messages if m["role"] == "system")
+    last_user = next((m.get("content", "") for m in reversed(messages) if m.get("role") == "user"), "")
+    is_structured_plan = (
+        ("PLAN:" in sys_text and "RESOURCE:" in sys_text)
+        or ("FOCUS:" in sys_text and "GOAL:" in sys_text)
+    )
+    is_polish_pass = "元のセリフ：" in last_user or "言い直したセリフ" in sys_text
+    target_name = "" if (is_structured_plan or is_polish_pass) else _extract_target_mention(messages)
+
+    eff_temp = profile["temperature"]
+    if temperature is not None:
+        try:
+            eff_temp = max(0.0, min(1.0, float(temperature)))
+        except (TypeError, ValueError):
+            pass
 
     chat_msgs = normalize_hf_messages(messages, fold_system=False)
     prompt_text = tokenizer.apply_chat_template(
         chat_msgs, tokenize=False, add_generation_prompt=True
     )
+    gen_kwargs = {
+        "max_new_tokens": min(max(80, int(max_new_tokens or 120)), 180 if is_structured_plan else 160),
+        "do_sample": eff_temp > 0.0,
+        "pad_token_id": tokenizer.eos_token_id,
+    }
+    if eff_temp > 0.0:
+        gen_kwargs["temperature"] = eff_temp
+        gen_kwargs["top_p"] = profile["top_p"]
+
     with _local_llm_lock:
         inputs = tokenizer([prompt_text], return_tensors="pt").to(device)
         with torch.inference_mode():
-            generated_ids = model.generate(
-                **inputs,
-                max_new_tokens=min(max(80, int(max_new_tokens or 120)), 160),
-                do_sample=True,
-                temperature=profile["temperature"],
-                top_p=profile["top_p"],
-                pad_token_id=tokenizer.eos_token_id,
-            )
+            generated_ids = model.generate(**inputs, **gen_kwargs)
         out_ids = generated_ids[0][inputs.input_ids.shape[1]:]
         decoded = tokenizer.decode(out_ids, skip_special_tokens=True).strip()
 
-    reply = _clean_dialogue_output(decoded, target_name) or decoded
+    if is_structured_plan:
+        reply = decoded
+    else:
+        reply = _clean_dialogue_output(decoded, target_name)
     return {
         "id": "hf-local-transformers",
         "object": "chat.completion",
@@ -790,7 +818,7 @@ def _generate_with_local_transformers(
 def _generate_local_hf_chat(
     messages: list, max_new_tokens: int = 100, requested_model: str = "", temperature: float | None = None
 ) -> dict:
-    """llama.cpp (Sarashina2.2-3B / TinySwallow-1.5B GGUF) を最優先し、未導入時のみ transformers を使用"""
+    """llama.cpp (Gemma-3-4B / Sarashina2.2-3B GGUF) を最優先し、未導入時のみ transformers を使用"""
     if _check_llama_cpp_available():
         try:
             return _generate_with_llama_cpp(
@@ -804,7 +832,10 @@ def _generate_local_hf_chat(
                 raise
             print(f"[LLM] llama.cpp fallback to transformers: {e}")
     return _generate_with_local_transformers(
-        messages, max_new_tokens=max_new_tokens, requested_model=requested_model
+        messages,
+        max_new_tokens=max_new_tokens,
+        requested_model=requested_model,
+        temperature=temperature,
     )
 
 
@@ -815,32 +846,39 @@ def _ensure_compatible_pyopenjtalk() -> None:
     ローカル pip キャッシュにある NumPy 2.x 対応 pyopenjtalk-0.4.1 wheel を
     純粋な ASCII パス (~/.cache/pyopenjtalk_041) に展開して優先ロードする。
     """
-    try:
-        import pyopenjtalk  # noqa: F401
-        return
-    except ValueError as e:
-        if "numpy.dtype size changed" not in str(e):
-            raise
+    with _pyopenjtalk_lock:
+        try:
+            import pyopenjtalk  # noqa: F401
+            return
+        except ValueError as e:
+            if "numpy.dtype size changed" not in str(e):
+                raise
 
-    for mod_name in [k for k in sys.modules if k == "pyopenjtalk" or k.startswith("pyopenjtalk.")]:
-        sys.modules.pop(mod_name, None)
+        for mod_name in [k for k in sys.modules if k == "pyopenjtalk" or k.startswith("pyopenjtalk.")]:
+            sys.modules.pop(mod_name, None)
 
-    shim_dir = Path.home() / ".cache" / "pyopenjtalk_041"
-    init_file = shim_dir / "pyopenjtalk" / "__init__.py"
-    if not init_file.is_file():
-        local_app = os.environ.get("LOCALAPPDATA", "")
-        if local_app:
-            pip_cache = Path(local_app) / "pip" / "Cache"
-            wheels = list(pip_cache.rglob("pyopenjtalk-0.4.1-*win_amd64.whl")) if pip_cache.exists() else []
-            if wheels:
-                shim_dir.mkdir(parents=True, exist_ok=True)
-                with zipfile.ZipFile(wheels[0]) as zf:
-                    zf.extractall(shim_dir)
+        shim_dir = (Path.home() / ".cache" / "pyopenjtalk_041").resolve()
+        init_file = shim_dir / "pyopenjtalk" / "__init__.py"
+        if not init_file.is_file():
+            local_app = os.environ.get("LOCALAPPDATA", "")
+            if local_app:
+                pip_cache = Path(local_app) / "pip" / "Cache"
+                wheels = list(pip_cache.rglob("pyopenjtalk-0.4.1-*win_amd64.whl")) if pip_cache.exists() else []
+                if wheels:
+                    shim_dir.mkdir(parents=True, exist_ok=True)
+                    with zipfile.ZipFile(wheels[0]) as zf:
+                        for member in zf.infolist():
+                            target = (shim_dir / member.filename).resolve()
+                            try:
+                                target.relative_to(shim_dir)
+                            except ValueError:
+                                raise ValueError(f"Unsafe zip entry blocked: {member.filename}")
+                        zf.extractall(shim_dir)
 
-    if init_file.is_file():
-        shim_str = str(shim_dir)
-        if shim_str not in sys.path:
-            sys.path.insert(0, shim_str)
+        if init_file.is_file():
+            shim_str = str(shim_dir)
+            if shim_str not in sys.path:
+                sys.path.insert(0, shim_str)
 
 
 def _resolve_sbv2_files(voice: str) -> tuple[str, str, str]:
@@ -970,42 +1008,43 @@ def _synthesize_sbv2_wav(
     style, style_weight = infer_tts_style(clean_text, voice, requested_style, available_styles)
 
     cache_key = (voice, style, round(speed, 2), clean_text)
-    if cache_key in _tts_audio_cache:
-        _tts_audio_cache.move_to_end(cache_key)
-        return _tts_audio_cache[cache_key]
+    with _sbv2_lock:
+        if cache_key in _tts_audio_cache:
+            _tts_audio_cache.move_to_end(cache_key)
+            return _tts_audio_cache[cache_key]
 
-    with torch.inference_mode():
-        sr, audio = model.infer(
-            clean_text,
-            style=style,
-            style_weight=style_weight,
-            sdp_ratio=0.2,
-            noise=0.6,
-            noise_w=0.8,
-            length=1.0 / speed,
-            line_split=False,
-        )
+        with torch.inference_mode():
+            sr, audio = model.infer(
+                clean_text,
+                style=style,
+                style_weight=style_weight,
+                sdp_ratio=0.2,
+                noise=0.6,
+                noise_w=0.8,
+                length=1.0 / speed,
+                line_split=False,
+            )
 
-    # 音量正規化＆クリックノイズ防止の極短フェード処理（クリアな聴感に仕上げる）
-    wav = np.asarray(audio, dtype=np.float32)
-    if wav.size > 0:
-        peak = float(np.max(np.abs(wav)))
-        if peak > 1e-6:
-            wav = wav * (0.84 / peak)
-        fade_len = min(int(sr * 0.015), wav.size // 4)
-        if fade_len > 1:
-            ramp = np.linspace(0.0, 1.0, fade_len, dtype=np.float32)
-            wav[:fade_len] *= ramp
-            wav[-fade_len:] *= ramp[::-1]
+        # 音量正規化＆クリックノイズ防止の極短フェード処理（クリアな聴感に仕上げる）
+        wav = np.asarray(audio, dtype=np.float32)
+        if wav.size > 0:
+            peak = float(np.max(np.abs(wav)))
+            if peak > 1e-6:
+                wav = wav * (0.84 / peak)
+            fade_len = min(int(sr * 0.015), wav.size // 4)
+            if fade_len > 1:
+                ramp = np.linspace(0.0, 1.0, fade_len, dtype=np.float32)
+                wav[:fade_len] *= ramp
+                wav[-fade_len:] *= ramp[::-1]
 
-    buf = io.BytesIO()
-    sf.write(buf, wav, sr, format="WAV", subtype="PCM_16")
-    audio_bytes = buf.getvalue()
+        buf = io.BytesIO()
+        sf.write(buf, wav, sr, format="WAV", subtype="PCM_16")
+        audio_bytes = buf.getvalue()
 
-    _tts_audio_cache[cache_key] = audio_bytes
-    if len(_tts_audio_cache) > _TTS_CACHE_MAX:
-        _tts_audio_cache.popitem(last=False)
-    return audio_bytes
+        _tts_audio_cache[cache_key] = audio_bytes
+        if len(_tts_audio_cache) > _TTS_CACHE_MAX:
+            _tts_audio_cache.popitem(last=False)
+        return audio_bytes
 
 
 def _check_sbv2_available():
@@ -1019,18 +1058,22 @@ def _check_sbv2_available():
 
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 512 * 1024  # 512KB 上限で巨大ペイロード DoS を防止
 CORS(
     app,
-    origins=[re.compile(r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$")],
+    origins=[re.compile(r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$")],
 )
 
 
 @app.after_request
-def _disable_static_code_cache(resp):
-    """ブラウザの古い JS/HTML キャッシュによる音声・AI設定の反映漏れを防ぐ"""
+def _apply_response_headers(resp):
+    """ブラウザの古い JS/HTML キャッシュ防止と基本セキュリティヘッダ付与"""
     ct = resp.headers.get("Content-Type", "")
     if any(t in ct for t in ("text/html", "javascript", "text/css")):
         resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    resp.headers.setdefault("Referrer-Policy", "no-referrer")
     return resp
 
 
@@ -1079,6 +1122,7 @@ def health():
     if not is_testing and not HF_USE_CLOUD_ROUTER and local_ok:
         hf_status["ok"] = True
         hf_status["models"] = [
+            HF_GEMMA3_GGUF_REPO,
             HF_SARASHINA_GGUF_REPO,
             HF_TINYSWALLOW_GGUF_REPO,
             *HF_CHARACTER_MODELS.values(),
@@ -1134,28 +1178,68 @@ def health():
     })
 
 
+def _parse_chat_max_tokens(raw_value, default: int = 100) -> int | None:
+    """max_tokens を安全な範囲 [16, 256] に正規化。不正型は None を返す。"""
+    if raw_value is None:
+        return default
+    if isinstance(raw_value, bool):
+        return None
+    try:
+        val = int(raw_value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if val <= 0:
+        return None
+    return max(16, min(256, val))
+
+
+def _parse_chat_temperature(raw_value) -> float | None:
+    if raw_value is None:
+        return None
+    if isinstance(raw_value, bool):
+        return None
+    try:
+        val = float(raw_value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(val):
+        return None
+    return max(0.0, min(1.5, val))
+
+
 # ── Hugging Face Chat エンドポイント（ローカル GGUF 優先） ──────────
 @app.route("/chat", methods=["POST"])
 def chat():
     body = request.get_json(silent=True)
     if not isinstance(body, dict) or not isinstance(body.get("messages"), list):
         return jsonify({"error": {"message": "リクエストボディの形式が不正です（messages が必要です）"}}), 400
+    if len(body["messages"]) == 0 or len(body["messages"]) > 64:
+        return jsonify({"error": {"message": "messages の件数が許容範囲外です（1〜64件）"}}), 400
 
-    requested_model = str(body.get("model") or HF_DEFAULT_MODEL).strip()
+    max_tokens = _parse_chat_max_tokens(body.get("max_tokens"), default=100)
+    if max_tokens is None:
+        return jsonify({"error": {"message": "max_tokens は正の整数で指定してください"}}), 400
+
+    raw_temp = body.get("temperature")
+    temperature = _parse_chat_temperature(raw_temp)
+    if raw_temp is not None and temperature is None:
+        return jsonify({"error": {"message": "temperature は有限な数値で指定してください"}}), 400
+
+    requested_model = str(body.get("model") or HF_DEFAULT_MODEL).strip()[:160]
     is_testing = bool(app.config.get("TESTING"))
 
-    # 1. 既定モード: 有料枠を使わずローカルの自然日本語 Hugging Face モデル (Sarashina2.2-3B / TinySwallow-1.5B) で推論
+    # 1. 既定モード: 有料枠を使わずローカルの自然日本語 Hugging Face モデル (Gemma-3-4B / Sarashina2.2-3B) で推論
     if not is_testing and not HF_USE_CLOUD_ROUTER and _check_local_llm_available():
         try:
             normalized_msgs = normalize_hf_messages(body["messages"], fold_system=False)
             local_data = _generate_local_hf_chat(
                 normalized_msgs,
-                max_new_tokens=int(body.get("max_tokens") or 100),
+                max_new_tokens=max_tokens,
                 requested_model=requested_model,
-                temperature=body.get("temperature"),
+                temperature=temperature,
             )
             return jsonify(local_data), 200
-        except Exception as e:
+        except Exception:
             app.logger.exception("Local HF chat inference failed")
             return jsonify({"error": {"message": "Hugging Face ローカル推論エラーが発生しました。"}}), 500
 
@@ -1169,11 +1253,21 @@ def chat():
     for idx, model_id in enumerate(candidate_models):
         normalized_msgs = normalize_hf_messages(body["messages"], fold_system=(idx > 0))
         payload = {
-            **body,
             "model": model_id,
             "messages": normalized_msgs,
+            "max_tokens": max_tokens,
             "stream": False,
         }
+        if temperature is not None:
+            payload["temperature"] = temperature
+        raw_top_p = body.get("top_p")
+        if raw_top_p is not None and not isinstance(raw_top_p, bool):
+            try:
+                tp = float(raw_top_p)
+                if math.isfinite(tp) and 0.0 < tp <= 1.0:
+                    payload["top_p"] = tp
+            except (TypeError, ValueError):
+                pass
 
         try:
             kwargs = {
@@ -1198,7 +1292,7 @@ def chat():
                     data.setdefault("hf_model_used", model_id)
             except ValueError:
                 app.logger.warning("HF chat response JSON parse failed for model=%s", model_id)
-                data = {"error": {"message": "Hugging Face API の応答を解析できませんでした。"}}
+                return jsonify({"error": {"message": "Hugging Face API の応答を解析できませんでした。"}}), 502
             return jsonify(data), 200
 
         if hf_resp.status_code in (401, 402, 403):
@@ -1209,12 +1303,12 @@ def chat():
             normalized_msgs = normalize_hf_messages(body["messages"], fold_system=False)
             local_data = _generate_local_hf_chat(
                 normalized_msgs,
-                max_new_tokens=int(body.get("max_tokens") or 100),
+                max_new_tokens=max_tokens,
                 requested_model=requested_model,
-                temperature=body.get("temperature"),
+                temperature=temperature,
             )
             return jsonify(local_data), 200
-        except Exception as e:
+        except Exception:
             app.logger.exception("Local HF chat inference failed")
             return jsonify({"error": {"message": "Hugging Face ローカル推論エラーが発生しました。"}}), 500
 

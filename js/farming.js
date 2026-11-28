@@ -578,10 +578,24 @@ class FarmManager {
         continue;
       }
       const owner = characters.find(c => c.id === sp.ownerId);
+      if (characters.length > 0 && !owner) {
+        target.ownerId = null;
+        target.ownerName = null;
+        target.ownerColor = null;
+        target.cropId = null;
+        target.stage = 0;
+        target.stageTimer = 0;
+        target.stageDuration = 0;
+        continue;
+      }
       const crop = CROP_CATALOG[sp.cropId];
-      target.ownerId = sp.ownerId;
-      target.ownerName = owner?.name || sp.ownerName || sp.ownerId;
-      target.ownerColor = owner?.color || sp.ownerColor || "#FFD700";
+      const rawColor = owner?.color || sp.ownerColor || "#FFD700";
+      const safeOwnerColor = (typeof rawColor === "string" && /^#[0-9a-fA-F]{3,8}$/.test(rawColor.trim()))
+        ? rawColor.trim()
+        : "#FFD700";
+      target.ownerId = owner?.id || sp.ownerId;
+      target.ownerName = owner?.name || String(sp.ownerName || sp.ownerId || "").slice(0, 24);
+      target.ownerColor = safeOwnerColor;
       target.cropId = crop.id;
       target.stage = Math.max(0, Math.min(3, Math.floor(Number(sp.stage) || 0)));
       target.stageDuration = crop.stageTime;
