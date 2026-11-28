@@ -4,6 +4,7 @@ class Game {
     this.ctx = this.canvas.getContext("2d");
     this.keysHeld = new Set();
     this.mousePos = null;
+    this._moveTarget = null;
     this.lastTime = null;
     this.running = false;
     this._lastNearbyIdsKey = "";
@@ -45,6 +46,17 @@ class Game {
     this.gatherCooldown = 0;
 
     this.chatManager = new ChatManager();
+    this.saveManager.onSaveError = () => {
+      this.chatManager.addMessage({
+        senderId: "system",
+        senderName: "セーブ警告",
+        senderColor: "#B71C1C",
+        recipientId: this.player?.id || "player",
+        recipientName: this.player?.name || "Player",
+        text: "⚠️ ブラウザの保存容量不足またはプライベートモードのため、進行状況を保存できませんでした。",
+        isAI: false,
+      });
+    };
     this.apiClient = new HuggingFaceClient();
     this.aiBrain = new AIBrain(
       this.characters, this.chatManager, this.apiClient,
@@ -306,7 +318,10 @@ class Game {
     if (!backdrop) return;
     const active = this._getActiveModalEl();
     backdrop.classList.toggle("hidden", !active);
-    if (active) this.keysHeld.clear();
+    if (active) {
+      this.keysHeld.clear();
+      this._moveTarget = null;
+    }
   }
 
   _focusModal(panelEl) {
@@ -362,6 +377,26 @@ class Game {
   _setupInput() {
     document.getElementById("modal-backdrop")?.addEventListener("click", () => {
       this._closeAllPanels();
+    });
+
+    // 全タブリスト共通の ArrowLeft / ArrowRight / Home / End キーボード操作（WAI-ARIA Tabs パターン）
+    document.addEventListener("keydown", e => {
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight" && e.key !== "Home" && e.key !== "End") return;
+      const tab = e.target?.closest?.('[role="tab"]');
+      if (!tab) return;
+      const tablist = tab.closest('[role="tablist"]');
+      if (!tablist) return;
+      const tabs = [...tablist.querySelectorAll('[role="tab"]:not([disabled])')];
+      const idx = tabs.indexOf(tab);
+      if (idx === -1 || tabs.length < 2) return;
+      e.preventDefault();
+      let nextIdx = idx;
+      if (e.key === "ArrowRight") nextIdx = (idx + 1) % tabs.length;
+      else if (e.key === "ArrowLeft") nextIdx = (idx - 1 + tabs.length) % tabs.length;
+      else if (e.key === "Home") nextIdx = 0;
+      else if (e.key === "End") nextIdx = tabs.length - 1;
+      tabs[nextIdx].focus();
+      tabs[nextIdx].click();
     });
 
     window.addEventListener("keydown", e => {
@@ -452,10 +487,22 @@ class Game {
     });
 
     this.canvas.addEventListener("click", e => {
-      if (!this.buildingManager.pendingType) return;
       const rect = this.canvas.getBoundingClientRect();
       const cx = e.clientX - rect.left;
       const cy = e.clientY - rect.top;
+
+      if (!this.buildingManager.pendingType) {
+        // 建築モード外＆モーダル非表示時はクリック／タップした位置へプレイヤーを移動（モバイル操作対応）
+        if (!this._hasOpenModal()) {
+          this._moveTarget = { x: cx, y: cy };
+          if (!this._hfBannerDismissed && this.apiClient?.mode === "browser-hf" && !this.apiClient._workerReady) {
+            this._hfBannerDismissed = true;
+            document.getElementById("hf-loader-overlay")?.classList.add("hidden");
+          }
+        }
+        return;
+      }
+
       const placedType = this.buildingManager.pendingType;
       const ok = this.buildingManager.placeAt(cx, cy);
       this.canvas.style.cursor = "default";
@@ -1161,6 +1208,7 @@ class Game {
       const nextId = mapSelect.value;
       mapSelect.blur();
       if (this.mapRenderer.setMap(nextId)) {
+        this._moveTarget = null;
         this.resourceManager.init(this.canvas.width, this.canvas.height, nextId);
         this.farmManager.initForMap(nextId, true);
         this.aiChars.forEach(c => {
@@ -1685,15 +1733,30 @@ class Game {
     if (this.keysHeld.has("a") || this.keysHeld.has("arrowleft")) vx -= 1;
     if (this.keysHeld.has("d") || this.keysHeld.has("arrowright")) vx += 1;
 
-    if (vx !== 0 && vy !== 0) {
-      const inv = 1 / Math.sqrt(2);
-      vx *= inv;
-      vy *= inv;
+    if (vx !== 0 || vy !== 0) {
+      this._moveTarget = null;
+      if (vx !== 0 && vy !== 0) {
+        const inv = 1 / Math.sqrt(2);
+        vx *= inv;
+        vy *= inv;
+      }
+    } else if (this._moveTarget) {
+      const tx = this._moveTarget.x - this.player.x;
+      const ty = this._moveTarget.y - this.player.y;
+      const dist = Math.hypot(tx, ty);
+      if (dist < 8) {
+        this._moveTarget = null;
+      } else {
+        vx = tx / dist;
+        vy = ty / dist;
+      }
     }
 
     const speed = GAME_CONFIG.playerSpeed * this.progression.getPlayerSpeedMultiplier();
     const dx = vx * speed * dt;
     const dy = vy * speed * dt;
+    const prevX = this.player.x;
+    const prevY = this.player.y;
 
     if (this.navGrid.isReady()) {
       const moved = this.navGrid.resolveMovement(this.player.x, this.player.y, dx, dy, 10, 20, 12);
@@ -1703,6 +1766,11 @@ class Game {
       const margin = 20;
       this.player.x = Math.max(margin, Math.min(this.canvas.width - margin, this.player.x + dx));
       this.player.y = Math.max(margin, Math.min(this.canvas.height - margin, this.player.y + dy));
+    }
+
+    // タップ移動中に壁で完全停止した場合はターゲットを解除
+    if (this._moveTarget && (vx !== 0 || vy !== 0) && Math.hypot(this.player.x - prevX, this.player.y - prevY) < 0.35) {
+      this._moveTarget = null;
     }
     this.player.updateAnimation(vx * speed, vy * speed, dt);
   }
@@ -2122,6 +2190,16 @@ class Game {
     this.mapRenderer.draw(ctx, w, h, this.farmManager, this.player, effRadius);
     this.resourceManager.draw(ctx, this.player, effRadius);
     this.buildingManager.draw(ctx, this.mousePos);
+
+    if (this._moveTarget && !this.buildingManager.pendingType) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(this._moveTarget.x, this._moveTarget.y, 10, 0, Math.PI * 2);
+      ctx.strokeStyle = "rgba(255, 215, 0, 0.85)";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.restore();
+    }
 
     // Y座標順（奥→手前）で自然な重なり描画
     const sortedChars = [...this.characters].sort((a, b) => a.y - b.y);

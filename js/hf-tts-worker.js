@@ -46,6 +46,7 @@ const CHAR_VOICE_PROFILES = {
 let zenRuntime = null;
 let sharedAssets = null; // { g2pJson, g2pBin, wasmBytes, gpuDevice, backend }
 let baseInitPromise = null;
+let gpuEpoch = 0;
 const ztmBufferPromises = new Map();
 const voiceEngines = new Map();
 const voiceEnginePromises = new Map();
@@ -76,7 +77,14 @@ async function fetchCachedArrayBuffer(url, onProgress = null) {
     }
   }
 
-  const resp = await fetch(url);
+  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+  const fetchTimer = controller ? setTimeout(() => controller.abort(), 30000) : null;
+  let resp;
+  try {
+    resp = await fetch(url, controller ? { signal: controller.signal } : undefined);
+  } finally {
+    if (fetchTimer) clearTimeout(fetchTimer);
+  }
   if (!resp.ok) {
     throw new Error(`HTTP ${resp.status} while fetching ${url}`);
   }
@@ -141,6 +149,7 @@ async function acquireWebGPUDevice() {
     if (!device) return null;
     if (device.lost && typeof device.lost.then === "function") {
       device.lost.then(() => {
+        gpuEpoch++;
         if (sharedAssets && sharedAssets.gpuDevice === device) {
           sharedAssets.gpuDevice = null;
           sharedAssets.backend = "cpu";
@@ -271,6 +280,7 @@ async function ensureVoiceEngine(voiceId, reportPrimaryProgress = false) {
 
     let engine = null;
     let usedBackend = "cpu";
+    const startEpoch = gpuEpoch;
 
     if (assets.gpuDevice) {
       try {
@@ -278,7 +288,12 @@ async function ensureVoiceEngine(voiceId, reportPrimaryProgress = false) {
           weights,
           meta: voc.meta,
         });
-        usedBackend = "webgpu";
+        if (gpuEpoch !== startEpoch || !assets.gpuDevice) {
+          // 初期化中に WebGPU デバイスが失効した場合は破棄して CPU へ切替
+          engine = null;
+        } else {
+          usedBackend = "webgpu";
+        }
       } catch (err) {
         console.warn(`[ZEN-TTS Worker] WebGPU init failed for ${voiceId}, falling back to CPU WASM:`, err?.message || err);
         engine = null;
@@ -296,6 +311,9 @@ async function ensureVoiceEngine(voiceId, reportPrimaryProgress = false) {
       );
       usedBackend = "cpu";
     }
+
+    // エンジン構築完了後は数十MBの生 .ztm バッファ参照を解放（再取得時は Cache API から高速読込）
+    ztmBufferPromises.delete(voiceId);
 
     const entry = { engine, backend: usedBackend, voiceId };
     voiceEngines.set(voiceId, entry);
@@ -505,7 +523,27 @@ self.onmessage = async (event) => {
             speed: expr.speed,
             pitch: expr.pitch,
           });
-          const res = await entry.engine.speak(trimmed, { ...opts, dict });
+          let res;
+          try {
+            res = await entry.engine.speak(trimmed, { ...opts, dict });
+          } catch (speakErr) {
+            if (entry.backend === "webgpu") {
+              console.warn(`[ZEN-TTS Worker] WebGPU speak failed for ${profile.voice}; falling back to CPU:`, speakErr?.message || speakErr);
+              gpuEpoch++;
+              if (sharedAssets) {
+                sharedAssets.gpuDevice = null;
+                sharedAssets.backend = "cpu";
+              }
+              voiceEngines.delete(profile.voice);
+              voiceEnginePromises.delete(profile.voice);
+              const cpuEntry = await ensureVoiceEngine(profile.voice, false);
+              entry.engine = cpuEntry.engine;
+              entry.backend = cpuEntry.backend;
+              res = await cpuEntry.engine.speak(trimmed, { ...opts, dict });
+            } else {
+              throw speakErr;
+            }
+          }
           const pcm = res?.audio;
           if (!validateWaveform(pcm)) {
             throw new Error(`Invalid ZEN-TTS waveform for ${profile.voice}`);

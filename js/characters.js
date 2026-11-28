@@ -562,30 +562,39 @@ class Character {
     ctx.font = "12px 'Segoe UI', 'Meiryo', sans-serif";
 
     const maxLineW = Math.min(260, Math.max(150, canvasW - 40));
-    const lines = [];
-    let current = "";
-    for (const ch of text) {
-      const test = current + ch;
-      if (ctx.measureText(test).width > maxLineW && current.length > 0) {
-        lines.push(current);
-        current = ch;
-      } else {
-        current = test;
+    const bubbleKey = `${text}::${maxLineW}`;
+    let finalLines;
+    let textW;
+    if (this._bubbleLayoutCache && this._bubbleLayoutCache.key === bubbleKey) {
+      finalLines = this._bubbleLayoutCache.finalLines;
+      textW = this._bubbleLayoutCache.textW;
+    } else {
+      const lines = [];
+      let current = "";
+      for (const ch of text) {
+        const test = current + ch;
+        if (ctx.measureText(test).width > maxLineW && current.length > 0) {
+          lines.push(current);
+          current = ch;
+        } else {
+          current = test;
+        }
       }
-    }
-    if (current) lines.push(current);
-    const maxLines = 3;
-    const finalLines = lines.slice(0, maxLines);
-    if (lines.length > maxLines) {
-      const lastIdx = maxLines - 1;
-      const lineChars = [...finalLines[lastIdx]];
-      finalLines[lastIdx] = lineChars.slice(0, Math.max(1, lineChars.length - 1)).join("") + "…";
+      if (current) lines.push(current);
+      const maxLines = 3;
+      finalLines = lines.slice(0, maxLines);
+      if (lines.length > maxLines) {
+        const lastIdx = maxLines - 1;
+        const lineChars = [...finalLines[lastIdx]];
+        finalLines[lastIdx] = lineChars.slice(0, Math.max(1, lineChars.length - 1)).join("") + "…";
+      }
+      textW = Math.max(...finalLines.map(l => ctx.measureText(l).width));
+      this._bubbleLayoutCache = { key: bubbleKey, finalLines, textW };
     }
 
     const lineH = 16;
     const padX = 10;
     const padY = 6;
-    const textW = Math.max(...finalLines.map(l => ctx.measureText(l).width));
     const bw = textW + padX * 2;
     const bh = finalLines.length * lineH + padY * 2;
 

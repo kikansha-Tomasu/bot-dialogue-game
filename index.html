@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Bot対話ゲーム</title>
-  <script src="colors.js?v=gh20"></script>
-  <link rel="stylesheet" href="css/style.css?v=gh20">
+  <script src="colors.js?v=gh21"></script>
+  <link rel="stylesheet" href="css/style.css?v=gh21">
 </head>
 <body>
 
@@ -68,12 +68,12 @@
 
       <!-- 注文方法タブ -->
       <div class="order-tabs" role="tablist" aria-label="注文方式">
-        <button type="button" class="tab-btn active" data-tab="limit" role="tab" aria-selected="true">📌 指値注文</button>
-        <button type="button" class="tab-btn" data-tab="market" role="tab" aria-selected="false">⚡ 成行注文</button>
+        <button type="button" class="tab-btn active" data-tab="limit" role="tab" aria-selected="true" aria-controls="tab-limit">📌 指値注文</button>
+        <button type="button" class="tab-btn" data-tab="market" role="tab" aria-selected="false" aria-controls="tab-market">⚡ 成行注文</button>
       </div>
 
       <!-- 指値注文フォーム -->
-      <div id="tab-limit" class="tab-content">
+      <div id="tab-limit" class="tab-content" role="tabpanel">
         <div class="post-form">
           <div class="post-row">
             <label for="post-sell-type">売る</label>
@@ -103,7 +103,7 @@
       </div>
 
       <!-- 成行注文フォーム -->
-      <div id="tab-market" class="tab-content hidden">
+      <div id="tab-market" class="tab-content hidden" role="tabpanel">
         <div class="market-toggle" role="group" aria-label="成行売買切替">
           <button type="button" class="market-side-btn active" data-side="buy" aria-pressed="true">買い成行</button>
           <button type="button" class="market-side-btn" data-side="sell" aria-pressed="false">売り成行</button>
@@ -168,14 +168,14 @@
 
       <!-- タブ切替 -->
       <div id="prog-tabs" role="tablist" aria-label="発展カテゴリ">
-        <button type="button" class="prog-tab-btn active" data-ptab="town" role="tab" aria-selected="true">🏙 街の発展</button>
-        <button type="button" class="prog-tab-btn" data-ptab="farming" role="tab" aria-selected="false">🌾 農業</button>
-        <button type="button" class="prog-tab-btn" data-ptab="cooking" role="tab" aria-selected="false">🍳 料理</button>
-        <button type="button" class="prog-tab-btn" data-ptab="upgrades" role="tab" aria-selected="false">⚡ 能力強化</button>
-        <button type="button" class="prog-tab-btn" data-ptab="avatars" role="tab" aria-selected="false">🐾 アバター</button>
+        <button type="button" class="prog-tab-btn active" data-ptab="town" role="tab" aria-selected="true" aria-controls="progression-body">🏙 街の発展</button>
+        <button type="button" class="prog-tab-btn" data-ptab="farming" role="tab" aria-selected="false" aria-controls="progression-body">🌾 農業</button>
+        <button type="button" class="prog-tab-btn" data-ptab="cooking" role="tab" aria-selected="false" aria-controls="progression-body">🍳 料理</button>
+        <button type="button" class="prog-tab-btn" data-ptab="upgrades" role="tab" aria-selected="false" aria-controls="progression-body">⚡ 能力強化</button>
+        <button type="button" class="prog-tab-btn" data-ptab="avatars" role="tab" aria-selected="false" aria-controls="progression-body">🐾 アバター</button>
       </div>
 
-      <div id="progression-body"></div>
+      <div id="progression-body" role="tabpanel"></div>
       <div id="progression-status" aria-live="polite"></div>
     </div>
 
@@ -235,7 +235,7 @@
         <button id="btn-orderbook"   type="button" title="取引板を開く (T)">📋 取引板 <kbd>T</kbd></button>
       </div>
       <div id="controls-hint">
-        WASD: 移動 &nbsp;|&nbsp; Esc: 閉じる
+        WASD / クリック: 移動 &nbsp;|&nbsp; Esc: 閉じる
       </div>
     </div>
   </div>
@@ -281,22 +281,22 @@
 </div>
 
 <!-- スクリプト読み込み順序が重要 -->
-<script src="js/config.js?v=gh20"></script>
-<script src="js/resources.js?v=gh20"></script>
-<script src="js/inventory.js?v=gh20"></script>
-<script src="js/buildings.js?v=gh20"></script>
-<script src="js/trade.js?v=gh20"></script>
-<script src="js/pathfinding.js?v=gh20"></script>
-<script src="js/farming.js?v=gh20"></script>
-<script src="js/progression.js?v=gh20"></script>
-<script src="js/storage.js?v=gh20"></script>
-<script src="js/characters.js?v=gh20"></script>
-<script src="js/map.js?v=gh20"></script>
-<script src="js/chat.js?v=gh20"></script>
-<script src="js/api.js?v=gh20"></script>
-<script src="js/tts.js?v=gh20"></script>
-<script src="js/ai-brain.js?v=gh20"></script>
-<script src="js/game.js?v=gh20"></script>
+<script src="js/config.js?v=gh21"></script>
+<script src="js/resources.js?v=gh21"></script>
+<script src="js/inventory.js?v=gh21"></script>
+<script src="js/buildings.js?v=gh21"></script>
+<script src="js/trade.js?v=gh21"></script>
+<script src="js/pathfinding.js?v=gh21"></script>
+<script src="js/farming.js?v=gh21"></script>
+<script src="js/progression.js?v=gh21"></script>
+<script src="js/storage.js?v=gh21"></script>
+<script src="js/characters.js?v=gh21"></script>
+<script src="js/map.js?v=gh21"></script>
+<script src="js/chat.js?v=gh21"></script>
+<script src="js/api.js?v=gh21"></script>
+<script src="js/tts.js?v=gh21"></script>
+<script src="js/ai-brain.js?v=gh21"></script>
+<script src="js/game.js?v=gh21"></script>
 
 </body>
 </html>

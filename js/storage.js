@@ -9,6 +9,8 @@ class SaveManager {
   constructor(storage = null) {
     this._storage = storage || (typeof localStorage !== "undefined" ? localStorage : null);
     this._saveTimer = null;
+    this.onSaveError = null;
+    this._saveErrorNotified = false;
   }
 
   hasSave() {
@@ -29,9 +31,14 @@ class SaveManager {
         ...state,
       };
       this._storage.setItem(SAVE_STORAGE_KEY, JSON.stringify(payload));
+      this._saveErrorNotified = false;
       return true;
     } catch (err) {
       console.warn("[SaveManager] 保存に失敗しました:", err.message);
+      if (!this._saveErrorNotified && typeof this.onSaveError === "function") {
+        this._saveErrorNotified = true;
+        try { this.onSaveError(err); } catch (_) {}
+      }
       return false;
     }
   }

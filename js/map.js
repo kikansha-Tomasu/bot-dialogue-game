@@ -25,6 +25,8 @@
       this._progImages     = new Map();
       this._overlayPlan    = null;
       this._sortedObjects  = [];
+      this._terrainCacheCanvas = null;
+      this._terrainCacheKey = "";
       this.onReady         = null;
       this.onMapChange     = null;
       this._load();
@@ -362,25 +364,57 @@
       const tileW = w / map.width;
       const tileH = h / map.height;
 
-      // 1. ベース地形タイル（街レベルに応じて道路が Lv.1〜5 に進化）
-      let drewAnyTile = false;
-      for (let row = 0; row < map.terrain.length; row++) {
-        const rowStr = map.terrain[row];
-        for (let col = 0; col < rowStr.length; col++) {
-          const assetId = map.legend[rowStr[col]];
-          let img = null;
-          if (this._townLevel >= 1 && UPGRADEABLE_ROADS.has(assetId)) {
-            img = this._progImages.get(`${assetId}_level_${this._townLevel}`) || null;
+      // 1. ベース地形タイル（オフスクリーンキャッシュで毎フレーム120枚の drawImage を削減）
+      const cacheKey = `${map.id}:${this._townLevel}:${Math.round(w)}x${Math.round(h)}`;
+      if (typeof document !== "undefined" && w > 0 && h > 0) {
+        if (!this._terrainCacheCanvas || this._terrainCacheKey !== cacheKey) {
+          const off = this._terrainCacheCanvas || document.createElement("canvas");
+          off.width = Math.max(1, Math.round(w));
+          off.height = Math.max(1, Math.round(h));
+          const octx = off.getContext("2d");
+          let drewAnyTile = false;
+          for (let row = 0; row < map.terrain.length; row++) {
+            const rowStr = map.terrain[row];
+            for (let col = 0; col < rowStr.length; col++) {
+              const assetId = map.legend[rowStr[col]];
+              let img = null;
+              if (this._townLevel >= 1 && UPGRADEABLE_ROADS.has(assetId)) {
+                img = this._progImages.get(`${assetId}_level_${this._townLevel}`) || null;
+              }
+              if (!img) img = this._tileImages.get(assetId);
+              if (!img) continue;
+              octx.drawImage(img, col * tileW, row * tileH, tileW + 0.5, tileH + 0.5);
+              drewAnyTile = true;
+            }
           }
-          if (!img) img = this._tileImages.get(assetId);
-          if (!img) continue;
-          ctx.drawImage(img, col * tileW, row * tileH, tileW + 0.5, tileH + 0.5);
-          drewAnyTile = true;
+          if (!drewAnyTile) {
+            octx.fillStyle = typeof C !== "undefined" ? C.grassBase : "#5A8A44";
+            octx.fillRect(0, 0, off.width, off.height);
+          }
+          this._terrainCacheCanvas = off;
+          this._terrainCacheKey = cacheKey;
         }
-      }
-      if (!drewAnyTile) {
-        ctx.fillStyle = typeof C !== "undefined" ? C.grassBase : "#5A8A44";
-        ctx.fillRect(0, 0, w, h);
+        ctx.drawImage(this._terrainCacheCanvas, 0, 0, w, h);
+      } else {
+        let drewAnyTile = false;
+        for (let row = 0; row < map.terrain.length; row++) {
+          const rowStr = map.terrain[row];
+          for (let col = 0; col < rowStr.length; col++) {
+            const assetId = map.legend[rowStr[col]];
+            let img = null;
+            if (this._townLevel >= 1 && UPGRADEABLE_ROADS.has(assetId)) {
+              img = this._progImages.get(`${assetId}_level_${this._townLevel}`) || null;
+            }
+            if (!img) img = this._tileImages.get(assetId);
+            if (!img) continue;
+            ctx.drawImage(img, col * tileW, row * tileH, tileW + 0.5, tileH + 0.5);
+            drewAnyTile = true;
+          }
+        }
+        if (!drewAnyTile) {
+          ctx.fillStyle = typeof C !== "undefined" ? C.grassBase : "#5A8A44";
+          ctx.fillRect(0, 0, w, h);
+        }
       }
 
       // 2. 農業プログレッション区画（farm_soil + 8種作物の成長ステージ 0〜3）

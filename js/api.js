@@ -111,7 +111,7 @@ class HuggingFaceClient {
       return;
     }
     try {
-      this._worker = new Worker("js/hf-browser-worker.js?v=gh20", { type: "module" });
+      this._worker = new Worker("js/hf-browser-worker.js?v=gh21", { type: "module" });
       this._workerLoading = true;
       this._workerError = "";
       this._workerStage = "connecting";
@@ -696,7 +696,8 @@ class HuggingFaceClient {
 
   async callAI(character, userMessage, targetName, historyUserMessage, options = {}) {
     const model = character.model || this.model;
-    const queueKey = this.mode === "browser-hf" ? "browser-hf" : model;
+    const baseModel = String(model || "").split("#")[0] || "local-llm";
+    const queueKey = this.mode === "browser-hf" ? "browser-hf" : baseModel;
     return this._withQueue(queueKey, async () => {
       const incomingText = options.incomingText
         || String(historyUserMessage || "").replace(/^[A-Za-z0-9_]+\s*[:：]\s*/, "").trim();
@@ -869,8 +870,8 @@ class HuggingFaceClient {
       );
       const draftEntry = evaluateAndAdd(draftRaw, "draft");
 
-      // Pass 2: 推敲（Polish）または厳格再生成
-      if (draftEntry && draftEntry.score < 95) {
+      // Pass 2: 推敲（Polish）— 問題点があるかスコアが85未満の場合のみ実施して不要な二重推論を削減
+      if (draftEntry && (draftEntry.issues.length > 0 || draftEntry.score < 85)) {
         try {
           const polishRaw = await generatePass(
             buildPolishMessages(draftEntry.body, draftEntry.issues),

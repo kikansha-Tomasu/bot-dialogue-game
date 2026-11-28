@@ -1865,4 +1865,20 @@ test("Hardening & Bugfixes (gh20): Japanese mentions, orderbook partial-fill cap
   };
   tts2.stop();
   assert.equal(aborted, true, "stop() 時に再生待機 Promise の中断コールバックが呼ばれること");
+
+  // 7. SaveManager.onSaveError が保存失敗時に1回だけ発火すること
+  let saveErrCount = 0;
+  const failingStorage = {
+    setItem() { throw new Error("QuotaExceededError"); },
+    getItem() { return null; },
+    removeItem() {},
+  };
+  const smFail = new SaveManager(failingStorage);
+  smFail.onSaveError = () => { saveErrCount++; };
+  assert.equal(smFail.saveImmediate({ mapId: "central_plaza" }), false);
+  assert.equal(smFail.saveImmediate({ mapId: "central_plaza" }), false);
+  assert.equal(saveErrCount, 1, "連続保存失敗でも通知は1回に抑制されること");
+
+  // 8. craftsman 説明文に農地成長ボーナスが明記されていること
+  assert.match(PLAYER_UPGRADES.craftsman.tiers[0].effect, /農地成長/);
 });

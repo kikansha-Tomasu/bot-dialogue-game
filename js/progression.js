@@ -85,8 +85,8 @@ const PLAYER_UPGRADES = {
     name: "建築マスター",
     icon: "🏗️",
     tiers: [
-      { level: 1, cost: { coin: 5, wood: 4, stone: 2 }, effect: "自分の建物生産速度 1.5倍", buildSpeedMult: 1.5 },
-      { level: 2, cost: { coin: 9, wood: 6, stone: 4 }, effect: "自分の建物生産速度 2.0倍", buildSpeedMult: 2.0 },
+      { level: 1, cost: { coin: 5, wood: 4, stone: 2 }, effect: "自分の建物生産速度 1.5倍・農地成長 +15%", buildSpeedMult: 1.5 },
+      { level: 2, cost: { coin: 9, wood: 6, stone: 4 }, effect: "自分の建物生産速度 2.0倍・農地成長 +30%", buildSpeedMult: 2.0 },
     ],
   },
   merchant: {
