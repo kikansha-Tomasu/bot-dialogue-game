@@ -330,23 +330,23 @@ def sanitize_tts_text(raw_text: str) -> str:
     ゲーム内の絵文字・記号・単位表記を、Style-Bert-VITS2 が自然に読み上げられる
     純粋な日本語話し言葉へ変換する。
     """
-    text = str(raw_text or "").strip()
+    text = str(raw_text or "").strip()[:500]
     # Python の \w は日本語も一致するため ASCII 名＋明示的日本語別名のみ除去（助詞直結「@Bobの〜」を壊さない）
     text = re.sub(
         r"^[@＠](?:[A-Za-z0-9_]+|全員|みんな|皆さん|みなさん|アリス|ボブ|キャロル|プレイヤー)"
-        r"(?:(?:さん|くん|君|ちゃん|様)[\s、,:：!！]*|[\s、,:：!！]+)",
+        r"(?:(?:さん|くん|君|ちゃん|様)[\s、,:：!！]{0,20}|[\s、,:：!！]{1,20})",
         "",
         text,
     )
 
-    # 資源・コイン・レベル表記を自然な日本語読みに変換
-    text = re.sub(r"🪵\s*(?:木材)?\s*[×x]?\s*(\d+)", r"木材\1個", text)
-    text = re.sub(r"🪨\s*(?:石)?\s*[×x]?\s*(\d+)", r"石\1個", text)
-    text = re.sub(r"🌿\s*(?:薬草)?\s*[×x]?\s*(\d+)", r"薬草\1個", text)
-    text = re.sub(r"🐟\s*(?:魚)?\s*[×x]?\s*(\d+)", r"魚\1匹", text)
-    text = re.sub(r"🪙\s*[×x+＋]?\s*(\d+(?:\.\d+)?)", r"\1コイン", text)
-    text = re.sub(r"(\d+(?:\.\d+)?)\s*🪙", r"\1コイン", text)
-    text = re.sub(r"(?<![A-Za-z])Lv\.?\s*(\d+)", r"レベル\1", text, flags=re.IGNORECASE)
+    # 資源・コイン・レベル表記を自然な日本語読みに変換（ReDoS回避のため空白量を制限）
+    text = re.sub(r"🪵\s{0,10}(?:木材)?\s{0,10}[×x]?\s{0,10}(\d{1,6})", r"木材\1個", text)
+    text = re.sub(r"🪨\s{0,10}(?:石)?\s{0,10}[×x]?\s{0,10}(\d{1,6})", r"石\1個", text)
+    text = re.sub(r"🌿\s{0,10}(?:薬草)?\s{0,10}[×x]?\s{0,10}(\d{1,6})", r"薬草\1個", text)
+    text = re.sub(r"🐟\s{0,10}(?:魚)?\s{0,10}[×x]?\s{0,10}(\d{1,6})", r"魚\1匹", text)
+    text = re.sub(r"🪙\s{0,10}[×x+＋]?\s{0,10}(\d{1,6}(?:\.\d{1,3})?)", r"\1コイン", text)
+    text = re.sub(r"(\d{1,6}(?:\.\d{1,3})?)\s{0,10}🪙", r"\1コイン", text)
+    text = re.sub(r"(?<![A-Za-z])Lv\.?\s{0,5}(\d{1,4})", r"レベル\1", text, flags=re.IGNORECASE)
     text = text.replace("🪵", "木材").replace("🪨", "石").replace("🌿", "薬草").replace("🐟", "魚").replace("🪙", "コイン")
 
     # 絵文字・装飾記号・発音しにくい記号を除去し、三点リーダーを自然な間（読点）へ変換
@@ -1014,7 +1014,8 @@ def _check_sbv2_available():
         from style_bert_vits2.tts_model import TTSModel  # noqa: F401
         return True, "Hugging Face Style-Bert-VITS2 JP-Extra (amitaro / jvnv-M1-jp / jvnv-F2-jp): OK"
     except Exception as e:
-        return False, str(e)
+        app.logger.warning("SBV2 availability check failed: %s", e)
+        return False, "Style-Bert-VITS2 が利用できません。"
 
 
 app = Flask(__name__)
@@ -1105,9 +1106,11 @@ def health():
             else:
                 hf_status["error"] = f"HTTP {resp.status_code}"
         except requests.exceptions.RequestException as e:
-            hf_status["error"] = str(e)
+            app.logger.warning("HF models check failed: %s", e)
+            hf_status["error"] = "Hugging Face API に接続できませんでした。"
         except ValueError as e:
-            hf_status["error"] = f"Invalid JSON: {e}"
+            app.logger.warning("HF models JSON parse failed: %s", e)
+            hf_status["error"] = "Hugging Face API の応答を解析できませんでした。"
 
     tts_ok, tts_msg = _check_sbv2_available()
     tts_status = {
@@ -1153,7 +1156,8 @@ def chat():
             )
             return jsonify(local_data), 200
         except Exception as e:
-            return jsonify({"error": {"message": f"Hugging Face ローカル推論エラー: {e}"}}), 500
+            app.logger.exception("Local HF chat inference failed")
+            return jsonify({"error": {"message": "Hugging Face ローカル推論エラーが発生しました。"}}), 500
 
     # 2. Cloud Router モード（または単体テストのモック検証時）
     candidate_models = [requested_model] + [
@@ -1181,9 +1185,10 @@ def chat():
                 kwargs["proxies"] = _LOCAL_PROXIES
             hf_resp = requests.post(HF_CHAT_URL, **kwargs)
         except requests.exceptions.RequestException as e:
+            app.logger.warning("HF chat request failed for model=%s: %s", model_id, e)
             if not is_testing and _check_local_llm_available():
                 break
-            return jsonify({"error": {"message": f"Hugging Face API に接続できません: {e}"}}), 502
+            return jsonify({"error": {"message": "Hugging Face API に接続できませんでした。"}}), 502
 
         last_resp = hf_resp
         if hf_resp.status_code == 200:
@@ -1192,7 +1197,8 @@ def chat():
                 if isinstance(data, dict):
                     data.setdefault("hf_model_used", model_id)
             except ValueError:
-                data = {"error": {"message": hf_resp.text}}
+                app.logger.warning("HF chat response JSON parse failed for model=%s", model_id)
+                data = {"error": {"message": "Hugging Face API の応答を解析できませんでした。"}}
             return jsonify(data), 200
 
         if hf_resp.status_code in (401, 402, 403):
@@ -1209,19 +1215,33 @@ def chat():
             )
             return jsonify(local_data), 200
         except Exception as e:
-            return jsonify({"error": {"message": f"Hugging Face ローカル推論エラー: {e}"}}), 500
+            app.logger.exception("Local HF chat inference failed")
+            return jsonify({"error": {"message": "Hugging Face ローカル推論エラーが発生しました。"}}), 500
 
     if last_resp is None:
         return jsonify({"error": {"message": "Hugging Face API 呼び出しに失敗しました"}}), 502
 
     try:
         err_data = last_resp.json()
-        if isinstance(err_data, dict) and "error" not in err_data:
-            err_data = {"error": {"message": str(err_data)}}
     except ValueError:
-        err_data = {"error": {"message": last_resp.text}}
+        err_data = None
 
-    return jsonify(err_data), last_resp.status_code
+    safe_message = "Hugging Face API からエラー応答が返されました。"
+    if isinstance(err_data, dict):
+        err_obj = err_data.get("error")
+        if isinstance(err_obj, dict):
+            raw_msg = err_obj.get("message")
+        elif isinstance(err_obj, str):
+            raw_msg = err_obj
+        else:
+            raw_msg = err_data.get("message")
+        if isinstance(raw_msg, str) and raw_msg.strip():
+            cleaned = re.sub(r"\s+", " ", raw_msg).strip()
+            if len(cleaned) <= 200 and "Traceback" not in cleaned and " at " not in cleaned:
+                safe_message = cleaned
+
+    app.logger.warning("HF chat upstream error status=%s", last_resp.status_code)
+    return jsonify({"error": {"message": safe_message}}), last_resp.status_code
 
 
 # ── Hugging Face TTS エンドポイント (/tts, /tts-local) ────────────
@@ -1250,7 +1270,8 @@ def tts():
                 "Content-Length": str(len(audio_bytes)),
             }
         except Exception as e:
-            return jsonify({"error": {"message": str(e)}}), 500
+            app.logger.exception("TTS synthesis failed (/tts)")
+            return jsonify({"error": {"message": "音声合成に失敗しました。"}}), 500
 
     return jsonify({"error": {"message": "Style-Bert-VITS2 が利用できません"}}), 503
 
@@ -1278,7 +1299,8 @@ def tts_local():
     try:
         audio_bytes = _synthesize_sbv2_wav(text, voice=voice, speed=speed, requested_style=style)
     except Exception as e:
-        return jsonify({"error": {"message": str(e)}}), 500
+        app.logger.exception("TTS synthesis failed (/tts-local)")
+        return jsonify({"error": {"message": "音声合成に失敗しました。"}}), 500
 
     return audio_bytes, 200, {
         "Content-Type": "audio/wav",
